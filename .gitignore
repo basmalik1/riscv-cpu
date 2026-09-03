@@ -1,0 +1,13 @@
+bin/__pycache__/
+sim/verilator/
+sim/bin/
+lint/*.log
+
+*.fst
+*.fst.hier
+*.vcd
+*.lst
+*.elf
+*.o
+*.d
+*.log

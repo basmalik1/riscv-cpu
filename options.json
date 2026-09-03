@@ -1,0 +1,8 @@
+{
+    "clock"    : 10000,
+    "arch"     : "rv32i",
+    "abi"      : "ilp32",
+    "timeout"  : 1000000,
+    "mem_base" : "0x80000000",
+    "mem_size" : "0x10000"
+}

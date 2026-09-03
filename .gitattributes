@@ -1,0 +1,5 @@
+# Every consumer of this repo is Linux tooling -- make, bash, Verilator, the
+# RISC-V toolchain -- so normalise to LF in both the repository and the working
+# tree. Makefiles in particular break subtly with CRLF, since a line ending in
+# "\<CR><LF>" is not a line continuation.
+* text=auto eol=lf

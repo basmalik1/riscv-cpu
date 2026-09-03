@@ -1,0 +1,18 @@
+`verilator_config
+
+// The package file is named for its contents rather than the package symbol;
+// some of its constants are used only by the testbench, which Verilator cannot
+// see when linting hdl/ alone.
+lint_off -rule DECLFILENAME -file "*/pkg/types.sv"
+lint_off -rule UNUSEDPARAM  -file "*/pkg/types.sv"
+
+// Waivers for the not-yet-implemented parts of the datapath. Every line here
+// should disappear as hdl/cpu.sv and hdl/control.sv get filled in -- if one
+// still fires once the core is complete, it is a real bug, not noise.
+lint_off -rule UNUSEDSIGNAL -file "*/hdl/cpu.sv"
+lint_off -rule UNUSEDSIGNAL -file "*/hdl/control.sv"
+lint_off -rule UNDRIVEN     -file "*/hdl/cpu.sv"
+
+// $readmemh intentionally leaves the untouched tail of the array at its
+// initial value rather than filling the whole memory.
+lint_off -rule WIDTHTRUNC -file "*/hvl/common/magic_memory.sv"
