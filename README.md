@@ -1,9 +1,13 @@
 # RISC-V CPU
 
-An RV32I processor built with an entirely open-source flow — Verilator for lint
-and simulation, GTKWave for waves, Make and Python for glue. Currently a
-single-cycle core; see [docs/roadmap.md](docs/roadmap.md) for where it goes
-from here.
+An RV32I processor built with an entirely open-source flow: Verilator for lint
+and simulation, GTKWave for waves, Yosys and sv2v for synthesis, OpenSTA
+against the Nangate45 cell library for timing, and Make and Python for glue.
+
+Two cores share the same ports and the same tests — a single-cycle one and a
+five-stage pipelined one — so they can be compared directly. There is also a
+DE10-Lite FPGA target, simulated but not yet run on hardware. See
+[docs/roadmap.md](docs/roadmap.md) for where it goes next.
 
 The layout separates synthesizable RTL from testbench code and keeps each tool
 in its own directory, so the pipelined and out-of-order iterations drop in
@@ -11,21 +15,50 @@ without moving anything.
 
 ```
 bin/       toolchain scripts, linker script, C startup code
-pkg/       shared SystemVerilog package (types.sv)
-hdl/       synthesizable RTL
-hvl/       testbench — common/ is simulator-agnostic, verilator/ is the front end
+pkg/       shared SystemVerilog packages
+hdl/       synthesizable RTL — common/ plus one directory per core
+hvl/       testbench — common/ is simulator-agnostic, unit/ is per-module
 lint/      Verilator lint
 sim/       build and run the simulation
-testcode/  assembly tests
+synth/     Yosys synthesis, area and timing
+fpga/      DE10-Lite targets — common/ plus one board top per core
+testcode/  test programs
 ```
+
+## Tools
+
+Everything is open source. Simulation and the whole test suite need only the
+first three rows; the last four are for synthesis and timing, which are
+optional.
+
+| Tool | Used for | Licence | Install |
+|---|---|---|---|
+| [Verilator](https://verilator.org) | lint and simulation | LGPL-3.0 / Artistic-2.0 | apt |
+| [GTKWave](https://gtkwave.sourceforge.net) | waveforms | GPL-2.0 | apt |
+| [RISC-V GCC](https://github.com/riscv-collab/riscv-gnu-toolchain) | assembling and compiling tests | GPL-3.0 | apt |
+| [Yosys](https://yosyshq.net/yosys/) | synthesis | ISC | apt |
+| [sv2v](https://github.com/zachjs/sv2v) | SystemVerilog to Verilog-2005, in front of Yosys | BSD-3-Clause | binary release |
+| [OpenSTA](https://github.com/parallaxsw/OpenSTA) | static timing analysis | GPL-3.0 | source build |
+| [Nangate45](https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts) | open 45nm standard cell library, for area and timing | see below | `make -C synth pdk` |
+
+`sv2v` is needed because Yosys's built-in frontend rejects any user-defined type
+declared at file scope. `OpenSTA` is needed because Yosys's own `sta` command
+only understands its internal cell types. Both are explained in
+[synth/README.md](synth/README.md), along with the build steps.
+
+**Nangate45** is an open academic cell library distributed with
+OpenROAD-flow-scripts, originally from Nangate Inc. via Si2's OpenCell
+initiative. It is a teaching and research library, not a fabrication PDK, and
+it is used here only as a consistent yardstick for comparing the two cores. It
+is downloaded on demand into `synth/pdk/`, which is gitignored — no third-party
+library is vendored into this repository.
 
 ## Setup
 
-Everything runs in WSL2 / Ubuntu. Verilator, GTKWave, Make, and Python you
-likely already have:
+Verilator, GTKWave, Make, and Python you likely already have:
 
 ```bash
-sudo apt install verilator gtkwave build-essential python3
+sudo apt install verilator gtkwave yosys build-essential python3
 ```
 
 The RISC-V cross compiler is the one piece that needs care:
@@ -106,10 +139,27 @@ its low byte, which is the `JAL` opcode, so a runaway fetch into a poisoned gap
 jumps rather than faulting. Zero is the safer default for exactly that reason —
 all-zero is a defined illegal instruction.
 
+Run the per-module unit tests — 181 checks across the ALU, register file,
+decoder, hazard unit and all five pipeline stages:
+
+```bash
+cd sim && make unit
+```
+
 View the waveform:
 
 ```bash
 cd sim && make waves
+```
+
+Synthesise, for cell counts and logic depth. Adding area needs the cell
+library, and adding nanoseconds needs OpenSTA on top of that:
+
+```bash
+cd synth && make compare        # cells and logic depth
+cd synth && make pdk            # fetch Nangate45, 6.4 MB, once
+cd synth && make area-compare   # area in um2
+cd synth && make timing-compare # critical path in ns
 ```
 
 `options.json` holds the clock period, timeout, ISA string, and memory map.
@@ -120,13 +170,37 @@ those numbers live.
 
 - **Halt:** a program ends by executing `slti x0, x0, -256` (`0xf0002013`),
   which the testbench traps to stop the simulation.
-- **Memory:** 64 KiB at `0x8000_0000`, modelled by `hvl/common/magic_memory.sv`
-  with combinational reads and clocked writes.
+- **Memory:** 64 KiB at `0x8000_0000`. The single-cycle core uses
+  `hvl/common/magic_memory.sv`, with combinational reads, because it has to
+  fetch and access data inside one clock edge. The pipelined core uses
+  `hvl/common/sync_memory.sv`, with registered reads, which the pipeline
+  registers absorb. `fpga/common/mem_sync.sv` is the synthesizable equivalent.
 - **Tests fail loudly:** assembly tests branch to an infinite loop on a
   mismatch, so a failure surfaces as a timeout rather than a quiet pass.
 
 ## Status
 
-The harness, memory model, ALU, and register file are complete. The datapath in
-`hdl/cpu.sv` and the decoder in `hdl/control.sv` are stubs — every `TODO` in
-those two files is a piece of the single-cycle core still to build.
+Both cores execute the full RV32I base integer set and pass the same tests,
+retiring identical instruction counts. Verified by a 58-check regression, 181
+unit checks, and mutation testing of both — deliberate bugs are injected to
+confirm the suites actually catch them.
+
+Measured, on the same programs:
+
+| | single-cycle | pipelined |
+|---|---|---|
+| IPC | 1.000 | 0.937 |
+| cells (Nangate45) | 7193 | 8865 |
+| area | 12302 um2 | 15656 um2 |
+| logic depth | 44 | 37 |
+
+The pipelined core is slower in cycles and larger in area, which is the
+expected result: a scalar pipeline cannot beat IPC 1.0, and the win is clock
+period rather than cycle count.
+
+Two things are honestly still open. The clock-period claim rests on logic depth
+rather than nanoseconds — the timing flow runs, but without a buffering and
+resizing pass its numbers are dominated by unbuffered high-fanout nets, so they
+are not a fair comparison. And the FPGA target is simulated only; pin
+assignments and timing closure are unverified. Both are written up where they
+belong, in [synth/README.md](synth/README.md) and [fpga/README.md](fpga/README.md).

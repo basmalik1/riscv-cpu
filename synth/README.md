@@ -79,11 +79,12 @@ cd synth && make compare              # both cores, side by side
 
 ## What these numbers are, and are not
 
-**They are not nanoseconds.** Real timing needs a standard cell library with
-timing arcs plus a static timing analyser. Yosys ships a toy `cells.lib` for
-its own regression tests, not a PDK. Getting to a real clock period means
-pulling in an open PDK (Sky130 or Nangate45) and OpenSTA, which is a
-substantially bigger lift and is not what this directory does.
+**The generic run is not nanoseconds.** `make compare` uses no library at all,
+so it reports gate counts and logic depth only. Yosys ships a toy `cells.lib`
+for its own regression tests, and it carries no timing arcs. Nanoseconds need
+`make pdk` for the cell library and OpenSTA on top — both set up below, and
+both carrying the caveat that the delays are not yet trustworthy without a
+buffering pass.
 
 **They are not the FPGA either.** Quartus maps to MAX 10 primitives — LUTs,
 M9K blocks, carry chains. This maps to generic gates. The absolute numbers are

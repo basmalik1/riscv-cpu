@@ -65,6 +65,15 @@ timing at 50 MHz. That is unverified, and only the fitter can answer it. If it
 closes at 30 MHz instead, the ratio shrinks accordingly. The single-cycle
 figure is on firmer ground, since 12.5 MHz is slack-rich by construction.
 
+## Tools
+
+Quartus Prime Lite, which is free but proprietary — the one non-open-source
+piece in this project. Intel's bitstream format is undocumented, so Yosys and
+nextpnr do not target MAX 10 and there is no open-source route to this board.
+Everything up to the bitstream (simulation, verification, synthesis estimates,
+timing) is open source; see the tool table in the top-level
+[README](../README.md).
+
 ## Building
 
 ```bash
