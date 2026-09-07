@@ -1,8 +1,10 @@
 // IF: owns the program counter and delivers a stable instruction to ID.
 //
-// The only stage with state of its own. The PC is not a pipeline register --
-// it is IF's own, which is why it lives here while the four pipeline registers
-// stay in cpu.sv with the rest of the sequencing.
+// The only stage with state of its own, and necessarily so: there is no
+// combinational way to fetch. The PC is not a pipeline register -- it is IF's
+// own -- and the held instruction below is too, so a stage_if without them
+// would be a bare mux with nothing to justify the file. The four registers that
+// sit BETWEEN stages stay in cpu.sv with the rest of the sequencing.
 //
 // Two things make this more than "pc plus four":
 //

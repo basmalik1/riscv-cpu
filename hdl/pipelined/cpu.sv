@@ -1,9 +1,19 @@
 // Five-stage pipelined RV32I core: IF, ID, EX, MEM, WB.
 //
-// This file is the wiring diagram. Each stage is a combinational module in its
-// own file; the only logic here is state -- the program counter, the four
-// pipeline registers, and the small amount of control deciding when they hold,
-// advance or squash.
+// This file is the wiring diagram. Each stage lives in its own file, and the
+// only logic here is the four pipeline registers plus the control deciding when
+// they hold, advance or squash.
+//
+// Where state lives: a register BETWEEN stages belongs here. A stage's OWN
+// state belongs with that stage. So the program counter and the held
+// instruction are in stage_if -- fetch is inherently stateful, and a stage_if
+// without them would be a bare mux -- while the register file is here, since it
+// spans ID and WB and belongs to neither. Every other stage is combinational.
+//
+// The cost of that split, worth knowing before chasing a branch bug: the
+// redirect path crosses three files. stage_ex decides a branch is taken,
+// stage_if applies the new PC, and this file squashes the two instructions
+// already fetched behind it.
 //
 // Assumes a SYNCHRONOUS-READ memory, which is the point rather than a
 // concession: the fetch issued in IF lands at the start of ID and the load
