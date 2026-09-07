@@ -1,6 +1,20 @@
+// Architectural register file, shared by both cores.
+//
+// WRITE_FIRST is what separates them. In a single-cycle core the read and the
+// write in a given cycle belong to the SAME instruction, so bypassing the write
+// value into the read ports would feed an instruction its own result -- a
+// combinational loop, not a forwarding path. In a pipeline the write is from
+// WB and the read from ID, four instructions apart, and without the bypass a
+// read one cycle before the write returns stale data.
+//
+// Hence the parameter rather than one behaviour: single_cycle leaves it at 0,
+// pipelined sets it to 1.
+
 module regfile
 import rv32i_types::*;
-(
+#(
+    parameter bit WRITE_FIRST = 1'b0
+)(
     input  logic                 clk,
     input  logic                 rst,
 
@@ -26,9 +40,14 @@ import rv32i_types::*;
         end
     end
 
-    // No write-first bypass: in a single-cycle core the read and the write in a
-    // given cycle belong to the same instruction, so forwarding would be wrong.
-    assign rs1_v = (rs1_s == '0) ? '0 : data[rs1_s];
-    assign rs2_v = (rs2_s == '0) ? '0 : data[rs2_s];
+    logic bypass_rs1, bypass_rs2;
+
+    assign bypass_rs1 = WRITE_FIRST && regf_we && (rd_s != '0) && (rd_s == rs1_s);
+    assign bypass_rs2 = WRITE_FIRST && regf_we && (rd_s != '0) && (rd_s == rs2_s);
+
+    // x0 is checked first: it reads zero even when an instruction nominally
+    // targets it, which is also why the write above is suppressed for rd = x0.
+    assign rs1_v = (rs1_s == '0) ? '0 : bypass_rs1 ? rd_v : data[rs1_s];
+    assign rs2_v = (rs2_s == '0) ? '0 : bypass_rs2 ? rd_v : data[rs2_s];
 
 endmodule

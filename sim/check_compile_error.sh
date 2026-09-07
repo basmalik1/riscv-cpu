@@ -2,7 +2,9 @@
 
 set -e
 
-LOG=verilator/build/compile.log
+# Directory to check is passed in, since each core builds into its own.
+DIR=${1:-verilator}
+LOG=$DIR/build/compile.log
 
 if [ ! -f "$LOG" ] || grep -q '%Error' "$LOG"; then
     echo -e "\033[0;31mCompile failed \033[0m"

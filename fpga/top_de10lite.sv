@@ -43,8 +43,6 @@ module top_de10lite #(
     output logic [7:0]  HEX5
 );
 
-    localparam logic [31:0] HALT_INST = 32'hf000_2013;
-
     logic clk;
     logic rst;
 
@@ -74,6 +72,8 @@ module top_de10lite #(
     logic [31:0] dmem_addr, dmem_wdata, dmem_rdata;
     logic [3:0]  dmem_rmask, dmem_wmask;
     logic        mem_error;
+    logic        core_halt;
+    logic        core_commit;
 
     cpu #(
         .RESET_PC   (MEM_BASE)
@@ -86,7 +86,9 @@ module top_de10lite #(
         .dmem_wdata (dmem_wdata),
         .dmem_rmask (dmem_rmask),
         .dmem_wmask (dmem_wmask),
-        .dmem_rdata (dmem_rdata)
+        .dmem_rdata (dmem_rdata),
+        .halt       (core_halt),
+        .commit     (core_commit)
     );
 
     mem_sync #(
@@ -110,14 +112,14 @@ module top_de10lite #(
     // ------------------------------------------------------------------
     // observability -- there is no printf on a board
     // ------------------------------------------------------------------
-    // The halt encoding is slti x0, x0, -256. Latch it so the LED stays lit
-    // rather than flickering past.
+    // The core reports its own halt, from a committed instruction rather than
+    // the fetch bus. Latch it so the LED stays lit rather than flickering past.
     logic halted;
 
     always_ff @(posedge cpu_clk) begin
         if (rst) begin
             halted <= 1'b0;
-        end else if (imem_rdata == HALT_INST) begin
+        end else if (core_halt) begin
             halted <= 1'b1;
         end
     end
@@ -142,6 +144,6 @@ module top_de10lite #(
     // SW is unused for now; tie it into the read so lint does not flag it and
     // the pin assignments stay valid for later use.
     logic unused_sw;
-    assign unused_sw = |SW & KEY[1];
+    assign unused_sw = |SW & KEY[1] & core_commit;
 
 endmodule

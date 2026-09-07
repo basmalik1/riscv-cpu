@@ -300,6 +300,42 @@ auipc_here:
     addi a2, a2, 1
     CHECK 76, a2, 6
 
+    # ------------------------------------------- pipeline hazards
+    # Correct on any core, but only interesting on a pipelined one. A load
+    # feeding the very next instruction is the single case forwarding cannot
+    # cover, so it needs a stall; the rest exercise the forwarding paths at
+    # distance one and two.
+    la   a3, scratch
+    li   a0, 0x11223344
+    sw   a0, 0(a3)
+
+    lw   a4, 0(a3)
+    addi a5, a4, 1              # load-use, distance 1
+    CHECK 90, a5, 0x11223345
+
+    li   a6, 0x11223344
+    lw   a4, 0(a3)
+    beq  a4, a6, 1f             # load feeding a branch, distance 1
+    j    fail
+1:  CHECK 91, a4, 0x11223344
+
+    lw   a4, 0(a3)
+    sw   a4, 4(a3)              # load feeding store data, distance 1
+    lw   a7, 4(a3)
+    CHECK 92, a7, 0x11223344
+
+    # Back-to-back ALU dependencies: forwarding from MEM and from WB.
+    li   a0, 1
+    addi a0, a0, 1              # distance 1
+    addi a0, a0, 1              # distance 1 again
+    CHECK 93, a0, 3
+
+    li   a0, 10
+    addi a1, a0, 1              # 11
+    addi a2, a0, 2              # 12, distance 2 from the li
+    add  a0, a1, a2             # both operands forwarded
+    CHECK 94, a0, 23
+
     # -------------------------------------------------------- jal / jalr
     # jal must both land on the target and leave pc+4 in rd.
     li   a2, 0
@@ -343,4 +379,5 @@ fail:
 .section ".data"
 .align 2
 scratch:
+    .word 0
     .word 0

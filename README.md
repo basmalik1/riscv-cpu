@@ -71,6 +71,17 @@ cd sim && make run_verilator_top_tb PROG=../testcode/smoke.s   # quick check
 cd sim && make run_verilator_top_tb PROG=../testcode/ctest.c   # C toolchain
 ```
 
+There are two cores. `CORE=` picks one, defaulting to the single-cycle:
+
+```bash
+cd sim && make CORE=pipelined run_verilator_top_tb PROG=../testcode/rv32i.s
+```
+
+Both expose the same ports, so the testbench and the FPGA top take either. Each
+run reports cycles, instructions retired and IPC. Expect the pipelined core to
+use *more* cycles on these programs, not fewer — see
+[docs/roadmap.md](docs/roadmap.md) for why that is the right answer.
+
 `PROG` takes a `.s`, a `.c`, or a prebuilt `.elf`. Assembly tests define their
 own `_start` and are linked without `bin/startup.s`; C tests get it, so
 `ctest.c` is what keeps the startup code and linker script honest.

@@ -22,7 +22,15 @@ import rv32i_types::*;
     output logic [31:0] dmem_wdata,
     output logic [3:0]  dmem_rmask,
     output logic [3:0]  dmem_wmask,
-    input  logic [31:0] dmem_rdata
+    input  logic [31:0] dmem_rdata,
+
+    // Present for interface parity with the pipelined core, where halt
+    // cannot be decoded from the fetch bus. Here every fetched
+    // instruction is also a committed one, so it is just a decode.
+    output logic        halt,
+
+    // One instruction retires every cycle by construction.
+    output logic        commit
 );
 
     // ------------------------------------------------------------------
@@ -33,6 +41,8 @@ import rv32i_types::*;
     logic [2:0]  funct3;
 
     assign inst      = imem_rdata;
+    assign halt      = (inst == HALT_INST);
+    assign commit    = ~rst;
     assign imem_addr = pc;
     assign funct3    = inst[14:12];
 

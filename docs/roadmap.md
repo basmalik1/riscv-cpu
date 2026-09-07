@@ -2,7 +2,7 @@
 
 Four iterations, each one a working CPU before the next starts.
 
-## 1. Single-cycle RV32I — *current*
+## 1. Single-cycle RV32I — *done, tagged v1.0*
 
 One instruction per cycle, zero-latency memory, no hazards to speak of.
 
@@ -12,15 +12,41 @@ the tests in `testcode/` reach the halt instruction instead of their fail loop.
 Remaining work is all inside `hdl/cpu.sv` and `hdl/control.sv` — every `TODO`
 in those two files is a piece of the datapath.
 
-## 2. Pipelined
+## 2. Pipelined — *current*
 
 Classic five stages (IF / ID / EX / MEM / WB) with forwarding and stalls.
+Lives in `hdl/pipelined/`; `make CORE=pipelined` selects it, and the
+single-cycle core stays in the tree so the two can be compared directly.
 
-New: pipeline registers, a hazard unit, branch resolution and flush logic,
-and a memory model with real latency so stalls actually matter.
+**Done when:** the same `testcode/` suite passes on both cores, retiring the
+same number of instructions, and the pipelined core closes timing at a
+meaningfully shorter clock period than the single-cycle one.
 
-**Done when:** the same `testcode/` suite passes and IPC is measurably better
-than 1/CPI of the single-cycle design at a shorter clock period.
+### A correction to the criterion this originally had
+
+It used to say "IPC measurably better than the single-cycle design". That is
+not achievable, and the mistake is worth keeping visible. The single-cycle
+core retires exactly one instruction per cycle by construction, so its IPC is
+1.000 and no scalar pipeline can beat it. Pipeline fill, the two-cycle
+penalty on a taken branch, and load-use stalls only ever push IPC below 1.
+
+Measured, once both cores were passing:
+
+| Test | single-cycle | pipelined | retired |
+|---|---|---|---|
+| `rv32i.s` | 436 cycles, IPC 1.000 | 465 cycles, IPC 0.937 | 436 both |
+| `ctest.c` | 212 cycles, IPC 1.000 | 274 cycles, IPC 0.773 | 212 both |
+| `smoke.s` | 22 cycles, IPC 1.000 | 29 cycles, IPC 0.758 | 22 both |
+
+The pipelined core is *slower in cycles* on every test, and that is the
+expected result. The win is entirely in clock period: the single-cycle
+critical path runs fetch through decode, register read, ALU, memory and
+writeback in one cycle, while the pipelined one is bounded by its longest
+single stage. Cycles per program is the wrong axis; cycles multiplied by
+clock period is the right one, and that number needs synthesis to obtain.
+
+The matching retired counts are the useful correctness signal here: both
+cores do exactly the same work on every test.
 
 ### This is also the natural moment to target an FPGA (DE10-Lite, MAX 10)
 
