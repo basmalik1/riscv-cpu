@@ -110,7 +110,40 @@ single_cycle   cells 5852     logic depth 44
 pipelined      cells 7081     logic depth 37
 ```
 
-Mapped to Nangate45, which gives real area:
+Mapped to Nangate45, timing via OpenSTA:
+
+```
+single_cycle   critical path 4.432 ns   fmax 225.6 MHz
+pipelined      critical path 4.140 ns   fmax 241.5 MHz
+```
+
+**Do not read that as a clock-period comparison.** It is 7%, and the flow that
+produced it is missing a step. Yosys's `abc -liberty` maps logic to cells but
+performs no buffer insertion and no gate sizing, so a net with large fanout is
+charged its whole capacitance through one gate. The pipelined critical path
+shows exactly that:
+
+```
+0.290  DFF_X1/Q
+2.817  MUX2_X1      <- one mux, 2.8 ns
+0.988  NOR3_X1
+0.093  AOI211_X1
+4.140  total
+```
+
+A `MUX2_X1` in this library is around 0.05 ns loaded normally. 68% of the
+pipelined path sits in that single gate. The single-cycle path, by contrast,
+spreads 4.432 ns across 47 cells at about 0.09 ns each, which is plausible. The
+two paths are not measuring the same thing, so the ratio between them is not
+meaningful.
+
+Closing that gap needs a buffering and resizing pass after mapping --
+OpenROAD's `repair_design`, which means installing OpenROAD proper rather than
+OpenSTA alone. Until then **the logic depth figures below are the more
+trustworthy proxy**, precisely because they count gates and are therefore
+immune to the missing buffering.
+
+Area, which does not depend on buffering and is sound as measured:
 
 ```
 single_cycle   7193 cells   12302.5 um2

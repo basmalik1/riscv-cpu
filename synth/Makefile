@@ -30,9 +30,16 @@ MAPPED := $(BUILD)/mapped.v
 LIBERTY := pdk/NangateOpenCellLibrary_typical.lib
 LIB_URL := https://raw.githubusercontent.com/The-OpenROAD-Project/OpenROAD-flow-scripts/master/flow/platforms/nangate45/lib/NangateOpenCellLibrary_typical.lib
 
-# Target period for the timing report, in ns. STA reports slack against this,
-# so it only sets the reference point -- the achieved path delay is what counts.
-PERIOD ?= 10.0
+# Two separate numbers, and conflating them gives a misleading answer.
+#
+# ABC_PERIOD is what the mapper optimises towards. Set it loose and ABC stops
+# work once it is met, so the measured delay reflects the constraint rather
+# than the design. Set deliberately tight so it optimises as hard as it can.
+#
+# PERIOD is only the reference the STA reports slack against. The number that
+# matters is the data arrival time, which is the achieved critical path.
+ABC_PERIOD ?= 1.0
+PERIOD     ?= 10.0
 
 .PHONY: all
 all: compare
@@ -91,7 +98,7 @@ $(MAPPED): $(FLAT) $(LIBERTY)
 	    hierarchy -check -top cpu; \
 	    synth -top cpu -flatten; \
 	    dfflibmap -liberty $(LIBERTY); \
-	    abc -liberty $(LIBERTY) -D $(shell echo '$(PERIOD) * 1000' | bc); \
+	    abc -liberty $(LIBERTY) -D $(shell echo '$(ABC_PERIOD) * 1000' | bc); \
 	    opt_clean; \
 	    stat -liberty $(LIBERTY); \
 	    write_verilog -noattr $(MAPPED); \
@@ -135,10 +142,9 @@ timing-compare:
 	@for c in single_cycle pipelined; do \
 	    $(MAKE) --no-print-directory CORE=$$c timing > /dev/null 2>&1 || \
 	        { echo "$$c: FAILED (see synth/build/$$c/sta.log)"; continue; }; \
-	    slack=$$(grep -E '^ *-?[0-9.]+ +slack' build/$$c/sta.log | tail -1 | awk '{print $$1}'); \
-	    arr=$$(grep -E 'data arrival time' build/$$c/sta.log | tail -1 | awk '{print $$1}'); \
-	    printf '%-14s critical path %s ns   slack %s ns vs %s ns target\n' \
-	        "$$c" "$$arr" "$$slack" "$(PERIOD)"; \
+	    arr=$$(grep -E 'data arrival time' build/$$c/sta.log | head -1 | awk '{print $$1}'); \
+	    fmax=$$(echo "scale=1; 1000 / $$arr" | bc); \
+	    printf '%-14s critical path %6s ns   fmax %6s MHz\n' "$$c" "$$arr" "$$fmax"; \
 	done
 
 .PHONY: clean
