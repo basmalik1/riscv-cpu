@@ -36,7 +36,7 @@ import pipelined_types::*;
     output logic        commit
 );
 
-    if_id_t  if_id;
+    if_id_t  if_id_n,  if_id;
     id_ex_t  id_ex_n,  id_ex;
     ex_mem_t ex_mem_n, ex_mem;
     mem_wb_t mem_wb_n, mem_wb;
@@ -47,54 +47,32 @@ import pipelined_types::*;
     // ==================================================================
     // IF
     // ==================================================================
-    logic [31:0] pc;
-
-    assign imem_addr = pc;
-
-    always_ff @(posedge clk) begin
-        if (rst) begin
-            pc <= RESET_PC;
-        end else if (redirect) begin
-            pc <= redirect_pc;
-        end else if (!stall) begin
-            pc <= pc + 32'd4;
-        end
-    end
-
-    // ------------------------------ IF/ID -----------------------------
-    // Carries no instruction: the memory's own output register is that. This
-    // only has to remember which PC the in-flight fetch belongs to.
-    always_ff @(posedge clk) begin
-        if (rst || redirect) begin
-            if_id.valid <= 1'b0;
-            if_id.pc    <= '0;
-        end else if (!stall) begin
-            if_id.valid <= 1'b1;
-            if_id.pc    <= pc;
-        end
-    end
-
-    // A stall cannot be served by holding the PC. The memory read is
-    // registered, so by the time ID knows it must stall the PC has already
-    // advanced and the next fetch returns the FOLLOWING instruction while ID
-    // still needs the current one -- which issues the stalled instruction
-    // twice. Capture it on the first stalled cycle and replay from here.
-    logic [31:0] held_inst;
-    logic        held_valid;
     logic [31:0] id_inst;
 
+    stage_if #(
+        .RESET_PC    (RESET_PC)
+    ) u_if (
+        .clk         (clk),
+        .rst         (rst),
+        .stall       (stall),
+        .redirect    (redirect),
+        .redirect_pc (redirect_pc),
+        .imem_addr   (imem_addr),
+        .imem_rdata  (imem_rdata),
+        .inst        (id_inst),
+        .if_id_n     (if_id_n)
+    );
+
+    // ------------------------------ IF/ID -----------------------------
+    // Carries no instruction: the memory's own output register is that, so
+    // this only remembers which PC the in-flight fetch belongs to.
     always_ff @(posedge clk) begin
         if (rst || redirect) begin
-            held_valid <= 1'b0;
-        end else if (stall && !held_valid) begin
-            held_inst  <= imem_rdata;
-            held_valid <= 1'b1;
+            if_id <= '0;
         end else if (!stall) begin
-            held_valid <= 1'b0;
+            if_id <= if_id_n;
         end
     end
-
-    assign id_inst = held_valid ? held_inst : imem_rdata;
 
     // ==================================================================
     // ID
