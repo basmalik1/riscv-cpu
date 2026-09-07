@@ -13,7 +13,10 @@ set_global_assignment -name SYSTEMVERILOG_FILE ../pkg/types.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../hdl/common/alu.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../hdl/common/regfile.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../hdl/common/control.sv
-# Swap single_cycle for pipelined here to build the other core.
+# To build the pipelined core instead, replace the single_cycle line below
+# with pkg/pipelined_types.sv followed by every file in hdl/pipelined/.
+# Note that fpga/top_de10lite.sv's phase counter exists only because the
+# single-cycle core needs it; the pipelined core wants a plain clock enable.
 set_global_assignment -name SYSTEMVERILOG_FILE ../hdl/single_cycle/cpu.sv
 set_global_assignment -name SYSTEMVERILOG_FILE mem_sync.sv
 set_global_assignment -name SYSTEMVERILOG_FILE seven_seg.sv

@@ -12,6 +12,16 @@ lint_off -rule UNUSEDPARAM  -file "*/pkg/types.sv"
 lint_off -rule UNUSEDSIGNAL -file "*/hdl/common/control.sv"
 
 
+// The pipelined stages take a whole pipeline register as one struct rather
+// than as loose ports, which is what keeps their interfaces readable. Every
+// stage therefore receives fields it has no use for. Permanent, and the
+// direct cost of that choice.
+lint_off -rule UNUSEDSIGNAL -file "*/hdl/pipelined/hazard.sv"
+lint_off -rule UNUSEDSIGNAL -file "*/hdl/pipelined/stage_ex.sv"
+lint_off -rule UNUSEDSIGNAL -file "*/hdl/pipelined/stage_mem.sv"
+lint_off -rule UNUSEDSIGNAL -file "*/hdl/pipelined/stage_wb.sv"
+lint_off -rule UNUSEDSIGNAL -file "*/hdl/pipelined/stage_id.sv"
+
 // $readmemh intentionally leaves the untouched tail of the array at its
 // initial value rather than filling the whole memory.
 lint_off -rule WIDTHTRUNC -file "*/hvl/common/magic_memory.sv"

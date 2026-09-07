@@ -5,7 +5,9 @@ SHELL := /bin/bash -o pipefail
 # everything downstream -- testbench, FPGA top, lint -- is unchanged by this.
 CORE ?= single_cycle
 
-PKG_SRCS := $(PWD)/../pkg/types.sv
+# The shared package first, then any package belonging to the selected core.
+# Order matters: a package must be compiled before the modules that import it.
+PKG_SRCS := $(PWD)/../pkg/types.sv $(wildcard $(PWD)/../pkg/$(CORE)_types.sv)
 HDL_SRCS := $(shell find $(PWD)/../hdl/common $(PWD)/../hdl/$(CORE) -name '*.sv')
 
 LINT_FLAGS = --lint-only -Wall --timescale 1ps/1ps \
