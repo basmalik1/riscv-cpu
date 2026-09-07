@@ -43,7 +43,11 @@ import rv32i_types::*;
     output logic [31:0] commit_pc,
     output logic        commit_regf_we,
     output logic [4:0]  commit_rd_s,
-    output logic [31:0] commit_rd_v
+    output logic [31:0] commit_rd_v,
+    output logic        commit_mem_we,
+    output logic [31:0] commit_mem_addr,
+    output logic [31:0] commit_mem_wdata,
+    output logic [1:0]  commit_mem_size
 );
 
     // ------------------------------------------------------------------
@@ -62,6 +66,12 @@ import rv32i_types::*;
     assign commit_pc      = pc;
     assign commit_regf_we = regf_we;
     assign commit_rd_s    = inst[11:7];
+
+    // Free again, and for the same reason: the store's address, data and width
+    // are all live this cycle. The address is the EFFECTIVE one, not the
+    // word-aligned address the memory port sees.
+    assign commit_mem_we    = mem_write;
+    assign commit_mem_size  = funct3[1:0];
     assign imem_addr = pc;
     assign funct3    = inst[14:12];
 
@@ -251,7 +261,9 @@ import rv32i_types::*;
     // ------------------------------------------------------------------
     // writeback
     // ------------------------------------------------------------------
-    assign commit_rd_v = rd_v;
+    assign commit_rd_v      = rd_v;
+    assign commit_mem_addr  = alu_f;
+    assign commit_mem_wdata = rs2_v;
 
     always_comb begin
         unique case (wb_sel)

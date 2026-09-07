@@ -33,6 +33,9 @@ import pipelined_types::*;
     logic [31:0] commit_pc, commit_rd_v;
     logic        commit_regf_we;
     logic [4:0]  commit_rd_s;
+    logic        commit_mem_we;
+    logic [31:0] commit_mem_addr, commit_mem_wdata;
+    logic [1:0]  commit_mem_size;
 
     // RESET_PC is 0 here so a word address is just an array index.
     cpu #(.RESET_PC(32'h0)) dut (
@@ -43,7 +46,9 @@ import pipelined_types::*;
         .dmem_rdata(dmem_rdata),
         .halt(halt), .commit(commit),
         .commit_pc(commit_pc), .commit_regf_we(commit_regf_we),
-        .commit_rd_s(commit_rd_s), .commit_rd_v(commit_rd_v));
+        .commit_rd_s(commit_rd_s), .commit_rd_v(commit_rd_v),
+        .commit_mem_we(commit_mem_we), .commit_mem_addr(commit_mem_addr),
+        .commit_mem_wdata(commit_mem_wdata), .commit_mem_size(commit_mem_size));
 
     // Registered reads, matching what the core is written against.
     logic [31:0] mem [WORDS];

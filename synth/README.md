@@ -108,27 +108,38 @@ Read the ratio between the cores, not the absolute figures.
 Generic mapping, no library:
 
 ```
-single_cycle   cells 21645    logic depth 498
-pipelined      cells 18127    logic depth 59
+single_cycle   cells 21704    logic depth 498
+pipelined      cells 17644    logic depth 58
 ```
 
 Mapped to Nangate45, area:
 
 ```
-single_cycle   17938 cells   24901.9 um2
-pipelined      18924 cells   26956.4 um2
+single_cycle   18078 cells   25018.9 um2
+pipelined      18553 cells   26570.5 um2
 ```
 
 Timing via OpenSTA:
 
 ```
-single_cycle   critical path 27.686 ns   fmax  36.1 MHz
-pipelined      critical path  4.636 ns   fmax 215.7 MHz
+single_cycle   critical path 27.172 ns   fmax  36.8 MHz
+pipelined      critical path  4.587 ns   fmax 218.0 MHz
 ```
 
+**Do not read more than two significant figures into any of these.** The same
+flow on the same design gives numbers a percent or two apart from run to run,
+because `abc` is a heuristic optimiser and small changes upstream reshuffle its
+choices. Three separate runs during the commit-trace work put the
+single-cycle-to-pipelined path ratio at 6.19x, 5.97x and 5.92x. The conclusion
+-- about six times -- survives that spread comfortably; a claim about the third
+decimal would not.
+
 Those include the RVFI-style commit ports both cores expose for golden-model
-lockstep. They cost 0.4% area on the pipelined core and nothing measurable on
-the single-cycle one, and neither core's critical path runs through them --
+lockstep, and the 33 flip-flops `mem_wb_t` carries so that WB can report a
+store. Both are inside the run-to-run noise above -- the pipelined core
+measured slightly *smaller* after the store fields were added, which is a
+statement about ABC rather than about the design -- and neither core's critical
+path runs through them --
 worth checking rather than assuming, since verification-only logic inflating
 the number it is meant to verify would be a quiet way to be wrong. See
 [../docs/spike.md](../docs/spike.md).
@@ -137,7 +148,7 @@ the number it is meant to verify would be a quiet way to be wrong. See
 
 Before RV32M the two critical paths were 4.432 ns and 4.140 ns, a 7% gap this
 flow cannot support a claim about. Adding multiply and divide separated them by
-**6.0x**, and the reason is structural rather than incidental: a divide is the
+**about 6x**, and the reason is structural rather than incidental: a divide is the
 first operation whose latency the two designs are forced to handle differently.
 The pipelined core can stall, so it takes a one-bit-per-cycle divider that costs
 34 cycles and almost no delay. The single-cycle core cannot, so it takes a
@@ -164,22 +175,22 @@ resizes no gates, so a high-fanout net is charged its whole capacitance through
 one gate. Look at where each path spends its time:
 
 ```
-single_cycle   27.686 ns over 504 cells, largest single gate 0.718 ns (NOR3_X1)
-pipelined       4.636 ns over  14 cells, largest single gate 3.181 ns (MUX2_X1)
+single_cycle   27.172 ns over 503 cells, largest single gate 0.493 ns (NOR3_X1)
+pipelined       4.587 ns over  14 cells, largest single gate 3.254 ns (MUX2_X1)
 ```
 
 The single-cycle path is now a genuine measurement: half a thousand gates at
 roughly 0.05 ns each, which is what a ripple through a divider actually looks
 like. No gate dominates and there is nothing for buffering to fix.
 
-The pipelined path still shows the artifact -- 69% of it in one mux -- so its
-true delay is **shorter** than 4.636 ns. The error therefore runs in the
-direction that makes the pipelined core look worse, which makes 6.0x a floor
+The pipelined path still shows the artifact -- 71% of it in one mux -- so its
+true delay is **shorter** than 4.587 ns. The error therefore runs in the
+direction that makes the pipelined core look worse, which makes 6x a floor
 rather than an estimate. That is the opposite of the situation at 7%, where the
 artifact was larger than the difference being claimed.
 
 Logic depth corroborates it independently, and is immune to buffering because
-it counts gates: **498 against 59, or 8.4x**.
+it counts gates: **498 against 58, or 8.6x**.
 
 ### Where the critical paths are
 
@@ -198,8 +209,8 @@ one edge.
 The pipelined path is unchanged by M: MEM/WB, through the writeback mux,
 through the forwarding network, into the ALU. Forwarding is still what bounds
 this core, which is why adding a 2.9 ns multiplier alongside the ALU moved it
-only from 4.140 to 4.636 ns -- the multiplier is not on the critical path, the
-result mux in front of EX/MEM is.
+only from 4.140 to about 4.6 ns -- the multiplier is not on the critical path,
+the result mux in front of EX/MEM is.
 
 ### Memory is still not in this measurement
 

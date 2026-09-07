@@ -132,7 +132,7 @@ M, both cores computed everything in one pass of combinational logic and
 differed only in how many registers that logic was cut into. A divide cannot be
 done that way at any sensible clock, so the pipelined core stalls and the
 single-cycle core pays 21 ns. That turned the clock-period comparison from a 7%
-difference this flow cannot measure into a 6.0x one it can.
+difference this flow cannot measure into a roughly 6x one it can.
 
 **A divide is a variable-latency functional unit with a ready handshake**,
 which is the structure iteration 3 is built out of. Learning it inside a
@@ -206,19 +206,20 @@ Two consequences worth remembering:
   is not -- memory writes are not, which is the honest remaining gap.
 
 - **Nanosecond timing.** *Done.* `synth/` now maps to Nangate45 and runs
-  OpenSTA: single-cycle 27.686 ns against pipelined 4.636 ns, a 6.0x gap, with
-  logic depth corroborating at 498 against 59. Neither core infers a latch and
+  OpenSTA: single-cycle 27.172 ns against pipelined 4.587 ns, a gap of about
+  6x, with logic depth corroborating at 498 against 58. Two significant figures
+  is all this flow supports; repeated runs move the ratio by a percent or two. Neither core infers a latch and
   both pass `hierarchy -check`, which is the real synthesizability result —
   this RTL maps to gates rather than merely linting.
 
   Two caveats survive, and one has been resolved. The pipelined figure is still
-  inflated by the missing buffering pass (69% of its path is one unbuffered
-  mux), so 6.0x is a floor rather than an estimate; closing that needs
+  inflated by the missing buffering pass (71% of its path is one unbuffered
+  mux), so 6x is a floor rather than an estimate; closing that needs
   OpenROAD's `repair_design`, which means installing OpenROAD proper. And
   memory remains outside the synthesized module, so the single-cycle number
   omits the access that forces its board top to 12.5 MHz — it understates the
   gap further. What is no longer a caveat is the size of the difference: at 7%
-  the measurement error swamped the claim, and at 6.0x it does not.
+  the measurement error swamped the claim, and at 6x it does not.
 
   Note also that Yosys cannot read this design directly. Its built-in frontend
   rejects any user-defined type declared at file scope, package or not, though

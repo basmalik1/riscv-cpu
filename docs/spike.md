@@ -50,10 +50,15 @@ The core writes one line per retired instruction when run with
 
 ```
 80000038 00000517 x10 80000038
-80000040 00752023 -
+800002ac 00a6a023 - mem 80000790 89abcdef
+800003c4 00a680a3 - mem 80000791 aa
 ```
 
-That is `pc`, the instruction word, and either the register written or `-`.
+That is `pc`, the instruction word, either the register written or `-`, and the
+store if there was one. A store's value is printed at the WIDTH of the access —
+two hex digits for a byte, four for a halfword, eight for a word — which is
+Spike's own convention and the reason a byte store cannot read as a word store
+that happens to share its low byte.
 `bin/compare_spike.py` asks Spike for the same thing with `--log-commits`,
 normalises both into the same records, and walks them in step. Only the first
 disagreement is reported; everything after it is consequence rather than cause.
@@ -77,16 +82,21 @@ would be counted twice and the logs would diverge at commit 1 for no reason.
 ## What is compared, and what is not
 
 Compared: the PC of every retired instruction, the instruction word at that PC,
-which register it wrote, and the value written.
+which register it wrote, the value written, and the address, data and width of
+any store.
+
+The store address is the **effective** one — `rs1 + imm`, unaligned — not the
+word-aligned address the memory port is driven with. Reporting the aligned
+address would make all four byte stores within a word look identical and leave
+the offset logic unchecked.
 
 Not compared:
 
-- **Memory writes.** Spike logs stores as `mem 0x<addr> 0x<data>` and the core
-  does not report them. A store bug therefore surfaces at the next load of that
-  address rather than at the store itself. Every test program does load back
-  what it stores, so this is a delay in *where* the failure is reported rather
-  than a hole — but it is a real gap, and closing it means adding the store
-  address and data to the commit trace.
+- **The lane shifting itself.** The trace reports the store the instruction
+  *intended*: effective address, value and width, all taken upstream of the
+  shift into byte lanes that `stage_mem` performs. A bug in that shift still
+  reports at the next load of the address rather than at the store. See the
+  mutation table below, which measures exactly where each class lands.
 - **CSRs and traps.** The core has neither, so there is nothing to compare.
 - **Timing.** Spike has no notion of cycles. Everything about how long an
   instruction took stays the business of `tb_pipeline`, which is why that
@@ -103,6 +113,35 @@ The instruction word is read back from the testbench's own memory image at the
 committed PC rather than carried through the core. That costs nothing and keeps
 96 bits of verification-only state out of the pipeline registers. It assumes
 nothing self-modifies, which nothing here does.
+
+### Where a store bug gets reported
+
+Adding stores to the trace was meant to move the report from "the next load of
+that address" to "the store itself". Whether it did is measurable:
+
+| Store bug | Caught at | Field named |
+|---|---|---|
+| data taken from rs1 instead of rs2 | commit 171, the `sw` | `store data` |
+| effective address off by four | commit 171, the `sw` | `store addr` |
+| `sh` decoded as a byte store | commit 171, the `sw` | `store data`, `store width` |
+| data not shifted into its lane | commit 242, a later `lw` | `value` |
+| byte mask not shifted into its lane | commit 242, a later `lw` | `value` |
+
+Commit 171 is `sw x10, 0(x13)` — the store itself, with the offending field
+named. Commit 242 is `lw x11, 0(x13)`, reading back what the `sb` one commit
+earlier corrupted.
+
+So three of the five classes moved to the store and two did not, and the split
+is exactly the one the design predicts: what the instruction meant to do is in
+the trace, and what the lane logic did with it is not. The remaining two are
+still caught — by the load that observes the damage, which in this program is
+one instruction later, though in general that distance is a property of the
+program rather than of the checker.
+
+Closing that last part means carrying `dmem_addr`, `dmem_wdata` and
+`dmem_wmask` to WB and reconstructing the effective access from them: 68
+flip-flops rather than 33, to move two bug classes a short distance earlier.
+Not obviously worth it, and left undone deliberately rather than overlooked.
 
 ## The cores against each other
 

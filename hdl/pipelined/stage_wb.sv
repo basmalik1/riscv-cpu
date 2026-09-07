@@ -24,7 +24,16 @@ import pipelined_types::*;
     output logic [31:0] commit_pc,
     output logic        commit_regf_we,
     output logic [4:0]  commit_rd_s,
-    output logic [31:0] commit_rd_v
+    output logic [31:0] commit_rd_v,
+
+    // The store this instruction performed, if any. Reported here rather than
+    // from MEM so that one record describes one instruction: MEM holds the
+    // instruction AHEAD of the one committing, and pairing the two by hand in
+    // the testbench would bake the pipeline depth into the trace.
+    output logic        commit_mem_we,
+    output logic [31:0] commit_mem_addr,
+    output logic [31:0] commit_mem_wdata,
+    output logic [1:0]  commit_mem_size
 );
 
     logic [31:0] load_word, load_data;
@@ -64,5 +73,14 @@ import pipelined_types::*;
     assign commit_regf_we = regf_we;
     assign commit_rd_s    = mem_wb.rd_s;
     assign commit_rd_v    = wb_value;
+
+    // The EFFECTIVE address, not the word-aligned one the memory port sees.
+    // Spike logs rs1+imm, and a byte store to 0x...793 must not read as a
+    // store to 0x...790 or three quarters of the alignment logic goes
+    // unchecked.
+    assign commit_mem_we    = mem_wb.valid && mem_wb.mem_write;
+    assign commit_mem_addr  = mem_wb.alu_f;
+    assign commit_mem_wdata = mem_wb.store_data;
+    assign commit_mem_size  = mem_wb.funct3[1:0];
 
 endmodule

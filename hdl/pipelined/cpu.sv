@@ -52,7 +52,11 @@ import pipelined_types::*;
     output logic [31:0] commit_pc,
     output logic        commit_regf_we,
     output logic [4:0]  commit_rd_s,
-    output logic [31:0] commit_rd_v
+    output logic [31:0] commit_rd_v,
+    output logic        commit_mem_we,
+    output logic [31:0] commit_mem_addr,
+    output logic [31:0] commit_mem_wdata,
+    output logic [1:0]  commit_mem_size
 );
 
     if_id_t  if_id_n,  if_id;
@@ -231,7 +235,11 @@ import pipelined_types::*;
         .commit_pc      (commit_pc),
         .commit_regf_we (commit_regf_we),
         .commit_rd_s    (commit_rd_s),
-        .commit_rd_v    (commit_rd_v)
+        .commit_rd_v    (commit_rd_v),
+        .commit_mem_we    (commit_mem_we),
+        .commit_mem_addr  (commit_mem_addr),
+        .commit_mem_wdata (commit_mem_wdata),
+        .commit_mem_size  (commit_mem_size)
     );
 
     // ==================================================================

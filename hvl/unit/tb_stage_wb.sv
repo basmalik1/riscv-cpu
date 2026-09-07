@@ -19,6 +19,9 @@ import pipelined_types::*;
     logic [31:0] commit_pc, commit_rd_v;
     logic        commit_regf_we;
     logic [4:0]  commit_rd_s;
+    logic        commit_mem_we;
+    logic [31:0] commit_mem_addr, commit_mem_wdata;
+    logic [1:0]  commit_mem_size;
 
     stage_wb dut (.*);
 
@@ -111,6 +114,38 @@ import pipelined_types::*;
         // checks it against what Spike says landed in the register.
         load(3'b000, 2'd0); mem_wb.rd_s = 5'd3; mem_wb.pc4 = 32'h8000_0008; #1;
         expect_eq("commit_rd_v is extended", commit_rd_v, 32'hffff_ffef);
+
+        // ---- the store half of the trace ----------------------------------
+        // The EFFECTIVE address, not the word-aligned one the memory port
+        // sees. Reporting the aligned address would make every byte store in
+        // a word look identical and leave the offset logic unchecked.
+        mem_wb            = '0;
+        mem_wb.valid      = 1'b1;
+        mem_wb.mem_write  = 1'b1;
+        mem_wb.alu_f      = 32'h8000_0793;      // byte 3 of the word at 0790
+        mem_wb.store_data = 32'h0000_00aa;
+        mem_wb.funct3     = 3'b000;             // sb
+        #1;
+        expect_bit("store reported",          commit_mem_we,    1'b1);
+        expect_eq ("store addr is effective", commit_mem_addr,  32'h8000_0793);
+        expect_eq ("store data",              commit_mem_wdata, 32'h0000_00aa);
+        expect_eq ("store size is byte", {30'd0, commit_mem_size}, 32'd0);
+
+        mem_wb.funct3 = 3'b001; #1;             // sh
+        expect_eq("store size is half", {30'd0, commit_mem_size}, 32'd1);
+        mem_wb.funct3 = 3'b010; #1;             // sw
+        expect_eq("store size is word", {30'd0, commit_mem_size}, 32'd2);
+
+        // A squashed store must report nothing, or the trace would claim a
+        // write to memory that never reached the bus.
+        mem_wb.valid = 1'b0; #1;
+        expect_bit("squashed store not reported", commit_mem_we, 1'b0);
+
+        // And a non-store instruction never reports one.
+        mem_wb.valid     = 1'b1;
+        mem_wb.mem_write = 1'b0;
+        #1;
+        expect_bit("non-store reports nothing", commit_mem_we, 1'b0);
 
         report("stage_wb");
     end

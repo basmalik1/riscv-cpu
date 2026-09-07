@@ -24,6 +24,10 @@
     logic        commit_regf_we;
     logic [4:0]  commit_rd_s;
     logic [31:0] commit_rd_v;
+    logic        commit_mem_we;
+    logic [31:0] commit_mem_addr;
+    logic [31:0] commit_mem_wdata;
+    logic [1:0]  commit_mem_size;
 
     cpu #(
         .RESET_PC   (MEM_BASE)
@@ -42,7 +46,11 @@
         .commit_pc      (commit_pc),
         .commit_regf_we (commit_regf_we),
         .commit_rd_s    (commit_rd_s),
-        .commit_rd_v    (commit_rd_v)
+        .commit_rd_v    (commit_rd_v),
+        .commit_mem_we    (commit_mem_we),
+        .commit_mem_addr  (commit_mem_addr),
+        .commit_mem_wdata (commit_mem_wdata),
+        .commit_mem_size  (commit_mem_size)
     );
 
     // SYNC_MEM comes from the build: the single-cycle core needs a
@@ -89,8 +97,15 @@
     // Written only when +COMMITLOG=<path> is given, so an ordinary run pays
     // nothing for it. One line per retired instruction:
     //
-    //     <pc> <inst> x<rd> <value>     a register was written
-    //     <pc> <inst> -                 nothing was written
+    //     <pc> <inst> x<rd> <value>              a register was written
+    //     <pc> <inst> -                          nothing was written
+    //     <pc> <inst> - mem <addr> <value>       a store
+    //
+    // A store's value is printed at the WIDTH of the access -- two hex digits
+    // for a byte, four for a halfword, eight for a word -- which is Spike's
+    // own convention and the reason the two logs can be compared field for
+    // field. It also means a byte store cannot read as a word store that
+    // happens to share its low byte.
     //
     // The instruction word is read back out of the memory image rather than
     // carried through the core. Nothing here self-modifies, so the word at the
@@ -139,12 +154,28 @@
 
     task automatic trace_commit();
         logic [31:0] inst;
-        inst = word_at(commit_pc);
+        string       store;
+
+        inst  = word_at(commit_pc);
+        store = "";
+        if (commit_mem_we) begin
+            unique case (commit_mem_size)
+                2'b00: store = $sformatf(" mem %08h %02h",
+                                         commit_mem_addr, commit_mem_wdata[7:0]);
+                2'b01: store = $sformatf(" mem %08h %04h",
+                                         commit_mem_addr, commit_mem_wdata[15:0]);
+                // 2'b11 is not a legal width; printing it as a word makes the
+                // divergence show up as a value mismatch rather than vanishing.
+                default: store = $sformatf(" mem %08h %08h",
+                                           commit_mem_addr, commit_mem_wdata);
+            endcase
+        end
+
         if (commit_regf_we && commit_rd_s != 5'd0) begin
-            $fdisplay(commit_fd, "%08h %08h x%0d %08h",
-                      commit_pc, inst, commit_rd_s, commit_rd_v);
+            $fdisplay(commit_fd, "%08h %08h x%0d %08h%s",
+                      commit_pc, inst, commit_rd_s, commit_rd_v, store);
         end else begin
-            $fdisplay(commit_fd, "%08h %08h -", commit_pc, inst);
+            $fdisplay(commit_fd, "%08h %08h -%s", commit_pc, inst, store);
         end
     endtask
 

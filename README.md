@@ -211,7 +211,7 @@ those numbers live.
 Both cores execute the full RV32I base integer set and the M extension, pass
 the same tests, and produce byte-identical commit traces. Verified at four
 levels: every retired instruction checked against Spike, a 126-check ISA
-regression across two programs, 623 unit checks including a cycle-level
+regression across two programs, 631 unit checks including a cycle-level
 pipeline harness, and mutation testing of all of it — deliberate bugs are
 injected to confirm the suites can actually fail.
 
@@ -236,22 +236,26 @@ Measured:
 |---|---|---|
 | IPC, `rv32i.s` | 1.000 | 0.917 |
 | IPC, `rv32m.s` | 1.000 | 0.216 |
-| cells (Nangate45) | 17938 | 18924 |
-| area | 24902 um2 | 26956 um2 |
-| logic depth | 498 | 59 |
-| critical path | 27.686 ns | 4.636 ns |
+| cells (Nangate45) | 18078 | 18553 |
+| area | 25019 um2 | 26570 um2 |
+| logic depth | 498 | 58 |
+| critical path | 27.172 ns | 4.587 ns |
 
 **Adding M is what made the clock-period argument measurable.** Before it the
 two critical paths were 4.432 ns and 4.140 ns — a 7% difference, and this flow
 is not accurate enough to support a 7% claim. A combinational divider is 21 ns
-by itself, so the single-cycle core now sits at 27.7 ns against the pipelined
-core's 4.6 ns: **6.0x**, corroborated independently by logic depth at 8.4x.
-That gap is far too large for the flow's known inaccuracy to explain, and the
-inaccuracy runs the wrong way to help — 69% of the pipelined path is a single
-unbuffered mux, so its true path is *shorter* than measured and 6.0x is a
-floor. The single-cycle path, by contrast, spreads 27.7 ns over 504 cells with
-no gate above 0.72 ns, which is what a real ripple through a divider looks
-like.
+by itself, so the single-cycle core now sits at 27.2 ns against the pipelined
+core's 4.6 ns: **about 6x**, corroborated independently by logic depth at 8.6x.
+Not more precisely than that — repeated runs of the same flow on the same
+design put the ratio between 5.9x and 6.0x, because ABC's heuristics shift by a
+percent or two whenever the netlist changes. Quoting three decimals would imply
+a reproducibility this flow does not have.
+
+The gap is far too large for the flow's known inaccuracy to explain, and the
+inaccuracy runs the wrong way to help — 71% of the pipelined path is a single
+unbuffered mux, so its true path is *shorter* than measured and 6x is a floor.
+The single-cycle path, by contrast, spreads 27.2 ns over 503 cells with no gate
+above 0.5 ns, which is what a real ripple through a divider looks like.
 
 The honest counterweight is `rv32m.s` itself, where the pipelined core is
 **slower in wall-clock time on the board**: 36.6 us against 31.8 us. A
@@ -260,9 +264,9 @@ pathological for real code, and exactly the case a one-bit-per-cycle divider
 handles worst. Radix-4 would halve it. Nothing here does that yet.
 
 Two things are still open. The FPGA target is simulated only; pin assignments
-and timing closure are unverified. And the commit trace does not carry memory
-writes, so a store bug surfaces at the next load of that address rather than at
-the store — a delay in where the failure is reported rather than a hole, since
-every test program loads back what it stores, but a real gap. Both are written
+and timing closure are unverified. And the commit trace reports the store an
+instruction *intended* — effective address, data and width — but not the byte
+lane shifting downstream of it, so that last class of store bug still reports
+at the load that observes the damage rather than at the store. Both are written
 up where they belong, in [synth/README.md](synth/README.md),
 [fpga/README.md](fpga/README.md) and [docs/spike.md](docs/spike.md).

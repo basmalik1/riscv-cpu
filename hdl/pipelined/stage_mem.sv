@@ -67,6 +67,8 @@ import pipelined_types::*;
         mem_wb.funct3   = ex_mem.funct3;
         mem_wb.wb_sel   = ex_mem.wb_sel;
         mem_wb.regf_we  = ex_mem.regf_we;
+        mem_wb.mem_write   = ex_mem.mem_write;
+        mem_wb.store_data  = ex_mem.store_data;
         mem_wb.is_halt  = ex_mem.is_halt;
     end
 

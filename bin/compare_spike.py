@@ -7,8 +7,9 @@
 The core writes one line per retired instruction when run with
 `+COMMITLOG=<path>` (see hvl/common/top_tb.svh):
 
-    80000004 00500293 x5 00000005     a register was written
-    80000014 05c39263 -               nothing was written
+    80000004 00500293 x5 00000005              a register was written
+    80000014 05c39263 -                        nothing was written
+    80000040 00752023 - mem 80000064 0000000c  a store
 
 Spike is asked for the same thing with `--log-commits`, its output is
 normalised into the same records, and the two are walked in step. The first
@@ -57,8 +58,19 @@ SPIKE_RE = re.compile(
     r"^core\s+\d+:\s+(?:\d+\s+)?0x([0-9a-fA-F]+)\s+\(0x([0-9a-fA-F]+)\)(.*)$")
 SPIKE_REG_RE = re.compile(r"\bx\s*(\d+)\s+0x([0-9a-fA-F]+)")
 
+# A store prints two operands, `mem 0x<addr> 0x<data>`; a load prints only the
+# address it read. The optional second group is what tells them apart.
+#
+# Spike pads the stored value to the WIDTH of the access -- 0xaa for a byte,
+# 0xbeef for a halfword, 0x89abcdef for a word -- so the digit count carries
+# the size. The testbench writes its side the same way, which is what lets a
+# byte store be distinguished from a word store sharing its low byte.
+SPIKE_MEM_RE = re.compile(r"\bmem\s+0x([0-9a-fA-F]+)(?:\s+0x([0-9a-fA-F]+))?")
+
 RTL_RE = re.compile(
-    r"^([0-9a-fA-F]{8}) ([0-9a-fA-F]{8}) (?:x(\d+) ([0-9a-fA-F]{8})|-)\s*$")
+    r"^([0-9a-fA-F]{8}) ([0-9a-fA-F]{8}) "
+    r"(?:x(\d+) ([0-9a-fA-F]{8})|-)"
+    r"(?: mem ([0-9a-fA-F]{8}) ([0-9a-fA-F]+))?\s*$")
 
 
 def die(msg):
@@ -78,24 +90,32 @@ def get_option(key):
 class Commit:
     """One retired instruction, in whichever form it arrived."""
 
-    __slots__ = ("pc", "inst", "rd", "val")
+    __slots__ = ("pc", "inst", "rd", "val", "st_addr", "st_val", "st_w")
 
-    def __init__(self, pc, inst, rd, val):
+    def __init__(self, pc, inst, rd, val, st_addr=None, st_val=None, st_w=None):
         self.pc = pc
         self.inst = inst
-        self.rd = rd        # None when nothing was written
+        self.rd = rd            # None when no register was written
         self.val = val
+        self.st_addr = st_addr  # None when the instruction did not store
+        self.st_val = st_val
+        self.st_w = st_w        # store width in bytes: 1, 2 or 4
 
     def __eq__(self, other):
         return (self.pc == other.pc
                 and self.inst == other.inst
                 and self.rd == other.rd
-                and self.val == other.val)
+                and self.val == other.val
+                and self.st_addr == other.st_addr
+                and self.st_val == other.st_val
+                and self.st_w == other.st_w)
 
     def __str__(self):
-        if self.rd is None:
-            return f"{self.pc:08x} {self.inst:08x} -"
-        return f"{self.pc:08x} {self.inst:08x} x{self.rd} {self.val:08x}"
+        head = (f"{self.pc:08x} {self.inst:08x} -" if self.rd is None
+                else f"{self.pc:08x} {self.inst:08x} x{self.rd} {self.val:08x}")
+        if self.st_addr is None:
+            return head
+        return f"{head} mem {self.st_addr:08x} {self.st_val:0{self.st_w * 2}x}"
 
 
 def read_rtl(path):
@@ -107,10 +127,13 @@ def read_rtl(path):
             m = RTL_RE.match(line)
             if not m:
                 die(f"{path}:{n}: cannot parse RTL commit line: {line.rstrip()}")
-            pc, inst, rd, val = m.groups()
+            pc, inst, rd, val, sa, sv = m.groups()
             out.append(Commit(int(pc, 16), int(inst, 16),
                               int(rd) if rd else None,
-                              int(val, 16) if val else None))
+                              int(val, 16) if val else None,
+                              int(sa, 16) if sa else None,
+                              int(sv, 16) if sv else None,
+                              len(sv) // 2 if sv else None))
     return out
 
 
@@ -136,7 +159,14 @@ def parse_spike_line(line):
     if rd == 0:
         rd = val = None
 
-    return Commit(pc, inst, rd, val)
+    st_addr = st_val = st_w = None
+    mem = SPIKE_MEM_RE.search(tail)
+    if mem and mem.group(2) is not None:      # two operands means a store
+        st_addr = int(mem.group(1), 16) & 0xFFFFFFFF
+        st_val = int(mem.group(2), 16)
+        st_w = len(mem.group(2)) // 2
+
+    return Commit(pc, inst, rd, val, st_addr, st_val, st_w)
 
 
 def run_spike(elf, entry_pc, want, isa, mem_base, mem_size):
@@ -206,10 +236,10 @@ def compare(a, b, name_a, name_b):
         if a[i] != b[i]:
             print(f"{RED}DIVERGED{OFF} at commit {i}\n")
             lo = max(0, i - 4)
-            print(f"  {DIM}{'':>5}  {name_a:<34}  {name_b}{OFF}")
+            print(f"  {DIM}{'':>5}  {name_a:<48}  {name_b}{OFF}")
             for j in range(lo, min(n, i + 3)):
                 mark = f"{RED}>{OFF}" if j == i else " "
-                print(f"{mark} {j:>5}  {str(a[j]):<34}  {str(b[j])}")
+                print(f"{mark} {j:>5}  {str(a[j]):<48}  {str(b[j])}")
             print()
             # Say what actually differs, since two records can differ in one
             # field and reading hex side by side is how mistakes get made.
@@ -219,10 +249,16 @@ def compare(a, b, name_a, name_b):
             def regf(v):
                 return "(no write)" if v is None else f"x{v}"
 
+            def sizef(v):
+                return "(no store)" if v is None else f"{v} byte(s)"
+
             for what, x, y, fmt in (("pc", a[i].pc, b[i].pc, hexf),
                                     ("instruction", a[i].inst, b[i].inst, hexf),
                                     ("rd", a[i].rd, b[i].rd, regf),
-                                    ("value", a[i].val, b[i].val, hexf)):
+                                    ("value", a[i].val, b[i].val, hexf),
+                                    ("store addr", a[i].st_addr, b[i].st_addr, hexf),
+                                    ("store data", a[i].st_val, b[i].st_val, hexf),
+                                    ("store width", a[i].st_w, b[i].st_w, sizef)):
                 if x != y:
                     print(f"  {what:<12} {name_a} {fmt(x)}   {name_b} {fmt(y)}")
             return 1

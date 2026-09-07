@@ -78,6 +78,13 @@ package pipelined_types;
         logic [2:0]  funct3;
         wb_sel_t     wb_sel;
         logic        regf_we;
+        // Only the commit trace reads these, and they are the one place this
+        // design pays real flip-flops for verification: 33 of them, so that a
+        // store can be reported by the same stage that reports everything else
+        // rather than snooped off the bus a cycle earlier. The address is
+        // alu_f and the width is funct3, both already here.
+        logic        mem_write;
+        logic [31:0] store_data;
         logic        is_halt;
     } mem_wb_t;
 
