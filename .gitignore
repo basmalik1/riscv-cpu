@@ -13,3 +13,4 @@ lint/*.log
 *.log
 sim/fpga/
 sim/unit/
+synth/build/

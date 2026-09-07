@@ -150,11 +150,23 @@ Two consequences worth remembering:
   through iteration 1; this becomes necessary around iteration 2 and
   indispensable at iteration 3. The memory base is already `0x8000_0000` —
   Spike's default — so nothing needs remapping when it lands.
-- **Yosys synthesis** in a `synth/` directory, for cell count and timing
-  feedback. Worth adding once the pipelined design needs a clock-period
-  argument. Blocked as written: Yosys 0.33's built-in frontend has no
-  SystemVerilog package support, so it rejects both `module m import p::*;` and
-  a body-level `import p::*;`. Verilator and Quartus both accept them, so this
-  is a Yosys limitation, not an RTL one — it needs `sv2v` in front, or a
-  Verific-enabled build.
+- **Nanosecond timing.** `synth/` gives cell counts and logic depth through
+  Yosys. Measured: single-cycle 5852 cells at depth 44, pipelined 7081 cells at
+  depth 37 -- 21% more area for 16% less depth, with no latches inferred in
+  either. Two caveats keep that from being the clock-period answer. The
+  pipelined critical path runs MEM/WB through the writeback mux and the
+  forwarding network into the ALU, so forwarding gives back much of what
+  pipelining buys. And memory is outside the synthesized module, so the
+  single-cycle figure omits the memory access that forces its board top down to
+  12.5 MHz. Getting to real nanoseconds needs a standard cell library with
+  timing arcs plus a static timing analyser — an open PDK such as Sky130 or Nangate45, and OpenSTA.
+  Until then the iteration 2 speedup rests on the clock ratio (50 MHz against
+  12.5 MHz) and on the pipelined core closing timing at 50 MHz, which only the
+  fitter can confirm.
+
+  Note also that Yosys cannot read this design directly. Its built-in frontend
+  rejects any user-defined type declared at file scope, package or not, though
+  packed structs inside a module are fine. Verilator and Quartus accept all of
+  it, so this is a frontend limitation rather than an RTL one. `synth/` puts
+  sv2v in front; yosys-slang and Synlig are the alternatives.
 - **CI**, once there is a test suite worth regressing.
