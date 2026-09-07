@@ -66,13 +66,21 @@ cd lint && make
 Build and run a test:
 
 ```bash
-cd sim && make run_verilator_top_tb PROG=../testcode/smoke.s   # assembly
-cd sim && make run_verilator_top_tb PROG=../testcode/ctest.c   # C
+cd sim && make run_verilator_top_tb PROG=../testcode/rv32i.s   # full ISA
+cd sim && make run_verilator_top_tb PROG=../testcode/smoke.s   # quick check
+cd sim && make run_verilator_top_tb PROG=../testcode/ctest.c   # C toolchain
 ```
 
 `PROG` takes a `.s`, a `.c`, or a prebuilt `.elf`. Assembly tests define their
 own `_start` and are linked without `bin/startup.s`; C tests get it, so
 `ctest.c` is what keeps the startup code and linker script honest.
+
+`rv32i.s` is the real regression: 58 checks covering every instruction in the
+base integer set, including each byte and halfword offset for loads and stores
+and both directions of every branch. A failure spins in place with the failing
+check number left in `t0`, so the waveform tells you which one broke without
+bisecting. The final guard compares a running count against the assembler's own
+tally, so a check that never executed fails too.
 
 Memory not covered by the program image — `.bss`, the stack, any gap — is left
 at zero by default, which means a read of never-initialised memory looks
