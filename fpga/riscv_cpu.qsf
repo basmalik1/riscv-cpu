@@ -10,10 +10,11 @@ set_global_assignment -name TOP_LEVEL_ENTITY top_de10lite
 set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
 
 set_global_assignment -name SYSTEMVERILOG_FILE ../pkg/types.sv
-set_global_assignment -name SYSTEMVERILOG_FILE ../hdl/alu.sv
-set_global_assignment -name SYSTEMVERILOG_FILE ../hdl/regfile.sv
-set_global_assignment -name SYSTEMVERILOG_FILE ../hdl/control.sv
-set_global_assignment -name SYSTEMVERILOG_FILE ../hdl/cpu.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../hdl/common/alu.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../hdl/common/regfile.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../hdl/common/control.sv
+# Swap single_cycle for pipelined here to build the other core.
+set_global_assignment -name SYSTEMVERILOG_FILE ../hdl/single_cycle/cpu.sv
 set_global_assignment -name SYSTEMVERILOG_FILE mem_sync.sv
 set_global_assignment -name SYSTEMVERILOG_FILE seven_seg.sv
 set_global_assignment -name SYSTEMVERILOG_FILE top_de10lite.sv

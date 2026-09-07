@@ -9,7 +9,7 @@ lint_off -rule UNUSEDPARAM  -file "*/pkg/types.sv"
 // control.sv takes the whole instruction word but only decodes the opcode,
 // funct3 and inst[30]. The rs1/rs2/rd fields are read directly from `inst` by
 // cpu.sv for the register file, so they are genuinely unused here. Permanent.
-lint_off -rule UNUSEDSIGNAL -file "*/hdl/control.sv"
+lint_off -rule UNUSEDSIGNAL -file "*/hdl/common/control.sv"
 
 
 // $readmemh intentionally leaves the untouched tail of the array at its

@@ -1,8 +1,12 @@
 SHELL := /bin/bash -o pipefail
 .SHELLFLAGS += -e
 
+# Which core to build. Both expose the same module name and port list, so
+# everything downstream -- testbench, FPGA top, lint -- is unchanged by this.
+CORE ?= single_cycle
+
 PKG_SRCS := $(PWD)/../pkg/types.sv
-HDL_SRCS := $(shell find $(PWD)/../hdl -name '*.sv')
+HDL_SRCS := $(shell find $(PWD)/../hdl/common $(PWD)/../hdl/$(CORE) -name '*.sv')
 VER_HVL  := $(shell find $(PWD)/../hvl/common $(PWD)/../hvl/verilator \
                         -name '*.sv' -o -name '*.cpp')
 HDRS     := $(shell find $(PWD)/../hvl -name '*.svh')
