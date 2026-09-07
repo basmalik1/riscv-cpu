@@ -139,8 +139,9 @@ its low byte, which is the `JAL` opcode, so a runaway fetch into a poisoned gap
 jumps rather than faulting. Zero is the safer default for exactly that reason —
 all-zero is a defined illegal instruction.
 
-Run the per-module unit tests — 181 checks across the ALU, register file,
-decoder, hazard unit and all five pipeline stages:
+Run the unit tests — 200 checks across the ALU, register file, decoder, hazard
+unit, all five pipeline stages, and a cycle-level harness for the assembled
+pipeline:
 
 ```bash
 cd sim && make unit
@@ -181,9 +182,14 @@ those numbers live.
 ## Status
 
 Both cores execute the full RV32I base integer set and pass the same tests,
-retiring identical instruction counts. Verified by a 58-check regression, 181
-unit checks, and mutation testing of both — deliberate bugs are injected to
-confirm the suites actually catch them.
+retiring identical instruction counts. Verified at three levels: a 66-check
+ISA regression, 200 unit checks including a cycle-level pipeline harness, and
+mutation testing of all of it — deliberate bugs are injected to confirm the
+suites can actually fail.
+
+The three layers catch different things. A stall that fires one cycle too long
+produces entirely correct results, so no program-level test can see it; only
+the cycle-level harness does.
 
 Measured, on the same programs:
 
