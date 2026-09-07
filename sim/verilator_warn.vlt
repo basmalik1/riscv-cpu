@@ -22,6 +22,16 @@ lint_off -rule UNUSEDSIGNAL -file "*/hdl/pipelined/stage_mem.sv"
 lint_off -rule UNUSEDSIGNAL -file "*/hdl/pipelined/stage_wb.sv"
 lint_off -rule UNUSEDSIGNAL -file "*/hdl/pipelined/stage_id.sv"
 
+// Unit testbenches generate their own clock with a blocking assignment in an
+// always block, which is idiomatic for a testbench and meaningless as a
+// synthesis warning.
+lint_off -rule BLKSEQ    -file "*/hvl/unit/*"
+
+// A testbench has to declare every output port of its DUT to connect it, even
+// where a given test only inspects some of them.
+lint_off -rule UNUSEDSIGNAL -file "*/hvl/unit/*"
+lint_off -rule DECLFILENAME -file "*/hvl/unit/*"
+
 // $readmemh intentionally leaves the untouched tail of the array at its
 // initial value rather than filling the whole memory.
 lint_off -rule WIDTHTRUNC -file "*/hvl/common/magic_memory.sv"

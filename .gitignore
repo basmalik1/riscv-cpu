@@ -12,3 +12,4 @@ lint/*.log
 *.d
 *.log
 sim/fpga/
+sim/unit/

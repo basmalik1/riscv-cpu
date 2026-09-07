@@ -47,6 +47,12 @@ import rv32i_types::*;
 
     // x0 is checked first: it reads zero even when an instruction nominally
     // targets it, which is also why the write above is suppressed for rd = x0.
+    //
+    // Those two guards are each redundant on their own -- mutation testing
+    // confirms removing either alone changes nothing, because the other still
+    // holds x0 at zero, and only removing both is caught. Both stay: the write
+    // guard keeps data[0] from being dirtied at all, and the read guard means
+    // x0 is correct even if data[0] somehow is not.
     assign rs1_v = (rs1_s == '0) ? '0 : bypass_rs1 ? rd_v : data[rs1_s];
     assign rs2_v = (rs2_s == '0) ? '0 : bypass_rs2 ? rd_v : data[rs2_s];
 
