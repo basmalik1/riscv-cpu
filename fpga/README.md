@@ -1,56 +1,97 @@
 # DE10-Lite build
 
-An FPGA target for the single-cycle core. **Untested on hardware** — everything
-here is verified in simulation only, and the gap is spelled out at the bottom.
+FPGA targets for the DE10-Lite (MAX 10 10M50DAF484C7G). **Untested on
+hardware** — everything here is verified in simulation only, and the gap is
+spelled out at the bottom.
 
-## Why this directory exists at all
+```
+common/         board logic shared by every core: memory, seven segment decoder
+single_cycle/   board top + Quartus project, 12.5 MHz via a phase counter
+pipelined/      board top + Quartus project, 50 MHz directly
+```
+
+An `ooo/` directory drops in the same way when iteration 3 arrives.
+
+## Why there is a board top per core
 
 `hvl/common/magic_memory.sv` reads combinationally, which no FPGA block RAM
-does. On MAX 10 the situation is worse than a single wait state: the part is
-LE-based with no MLAB/distributed RAM, so an asynchronous 64 KiB array would
-become roughly 524,000 flip-flops against about 50,000 logic elements. It is
-not a tuning problem.
+does. On MAX 10 it is worse than a wait state: the part is LE-based with no
+MLAB or distributed RAM, so an asynchronous 64 KiB array becomes roughly
+524,000 flip-flops against about 50,000 logic elements. `common/mem_sync.sv`
+replaces it with a registered-read dual-port memory that infers M9K.
 
-The obvious fix — clock the memory on the falling edge — does not work either,
-and the reason is worth stating because it drove the whole design. `dmem_addr`
-comes out of the ALU, which needs `imem_rdata` first. Fetch and data access
-cannot share an edge, because the data address does not exist yet when the
-instruction arrives.
+What differs between the cores is how that memory is driven, and it is the
+whole story of iteration 2.
 
-So one instruction takes two memory edges. `top_de10lite.sv` divides the 50 MHz
-board clock by four with a phase counter:
+**Single-cycle** cannot use it directly. `dmem_addr` comes out of the ALU,
+which needs `imem_rdata` first, so fetch and data access cannot share a clock
+edge — the data address does not exist yet when the instruction arrives. One
+instruction therefore needs two memory edges, and `single_cycle/top_de10lite.sv`
+divides the 50 MHz board clock by four with a phase counter:
 
 | phase | what happens |
 |---|---|
 | 0 | `dmem_rdata` valid, writeback settling |
 | 1 | writeback still settling, `cpu_clk` low |
-| 2 | `cpu_clk` rises: PC updates, `imem_addr` settles, fetch latched at end of phase |
-| 3 | `imem_rdata` valid, ALU runs, `dmem_addr` settles, data latched at end of phase |
+| 2 | `cpu_clk` rises: PC updates, fetch latched at end of phase |
+| 3 | `imem_rdata` valid, ALU runs, data latched at end of phase |
 
-That is 12.5 MHz for the core, with 20 ns from fetch to address and 40 ns from
-load to writeback. **`hdl/cpu.sv` is unchanged** — from its point of view every
-instruction still finishes in one of its own cycles.
+That is 12.5 MHz for the core, and `cpu_clk` is a counter bit used as a clock,
+which Quartus rightly flags.
+
+**Pipelined** has no such problem. IF and MEM hold different instructions in
+the same cycle, so both memory ports are simply enabled every cycle and the
+core runs directly on the 50 MHz board clock. `pipelined/top_de10lite.sv` has
+no phase counter, no divider, and no derived clock at all.
+
+## What that is worth
+
+Measured in simulation, same programs, same board clock:
+
+| Test | single-cycle | pipelined | speedup |
+|---|---|---|---|
+| `rv32i.s` | 1748 board cycles, 34.96 µs | 466, 9.32 µs | **3.75x** |
+| `ctest.c` | 852 board cycles, 17.04 µs | 275, 5.50 µs | **3.10x** |
+| `smoke.s` | 92 board cycles, 1.84 µs | 30, 0.60 µs | **3.07x** |
+
+Note where this comes from. The pipelined core has *worse* IPC — 0.937 against
+1.000 — and takes more of its own cycles. It wins because it runs four times
+faster, and it runs four times faster because it does not need the phase
+counter. Cycles per program is the wrong axis; wall-clock time is the right
+one.
+
+**The caveat that matters:** this assumes the pipelined core actually closes
+timing at 50 MHz. That is unverified, and only the fitter can answer it. If it
+closes at 30 MHz instead, the ratio shrinks accordingly. The single-cycle
+figure is on firmer ground, since 12.5 MHz is slack-rich by construction.
 
 ## Building
 
 ```bash
-# Generate the memory image (--mif only needed if you switch mem_sync.sv to the
-# ram_init_file attribute; $readmemh reads memory_32.lst directly)
+# Memory image. --mif is only needed if you switch mem_sync.sv to the
+# ram_init_file attribute; $readmemh reads memory_32.lst directly.
 python3 bin/generate_memory_file.py --mif testcode/rv32i.s
 
-cd fpga && quartus_sh --flow compile riscv_cpu
+cd fpga/pipelined && quartus_sh --flow compile riscv_cpu
+```
+
+Simulate either board top before touching hardware:
+
+```bash
+cd sim && make CORE=pipelined   run_fpga_sim PROG=../testcode/rv32i.s
+cd sim && make CORE=single_cycle run_fpga_sim PROG=../testcode/rv32i.s
 ```
 
 ## Pin assignments are not in this repository
 
-`riscv_cpu.qsf` has the device and source list but **no pin assignments**, on
-purpose. A wrong assignment can drive a pin into contention with whatever else
-is wired to it on the board, and pin maps differ between board revisions.
+Neither `.qsf` has pin assignments, on purpose. A wrong assignment can drive a
+pin into contention with whatever else is wired to it, and pin maps differ
+between board revisions.
 
 Import Terasic's own assignments for your board instead — their DE10-Lite
-System CD ships a `.qsf` with the full set. The port names in
-`top_de10lite.sv` (`MAX10_CLK1_50`, `KEY`, `SW`, `LEDR`, `HEX0`–`HEX5`) follow
-Terasic's conventions so their file applies without editing.
+System CD ships a `.qsf` with the full set. The port names in both board tops
+(`MAX10_CLK1_50`, `KEY`, `SW`, `LEDR`, `HEX0`–`HEX5`) follow Terasic's
+conventions so their file applies without editing.
 
 ## Reading the board
 
@@ -59,32 +100,26 @@ Terasic's conventions so their file applies without editing.
 - `LEDR[9:2]` — `pc[9:2]`.
 - `HEX5`–`HEX0` — the PC, in hex.
 
-A failing test spins in its fail loop, so the PC stops and the displays hold
-that address. Look it up in `sim/bin/<prog>.dis` to find the check that gave up.
+A failing test spins in its fail loop, so look the displayed address up in
+`sim/bin/<prog>.dis` to find the check that gave up.
+
+One difference between the tops: the single-cycle one drives the displays
+straight from the fetch PC. The pipelined one samples it slowly, because it
+redirects on every pass through `j fail` and the fetch PC cycles over the jump
+plus the two instructions squashed behind it — at 50 MHz that is an unreadable
+blur. The sampled value lands on one of those three, which is within 8 bytes of
+the fail loop.
 
 ## What is actually verified
 
-`make run_fpga_sim` in `sim/` builds this exact RTL — `mem_sync.sv`,
-`top_de10lite.sv`, `seven_seg.sv`, the real phase counter — against the same
-programs the behavioural simulation runs, through
-`hvl/verilator_fpga/top_tb.sv`. That testbench also decodes the seven-segment
-outputs back to hex and checks them against the PC every cycle, so a wrong
-segment map fails in simulation rather than silently producing an unreadable
-board.
+`make run_fpga_sim` builds the real board top — `mem_sync.sv`, the core's
+`top_de10lite.sv`, `seven_seg.sv`, and the phase counter where there is one —
+against the same programs the behavioural flow runs, through
+`hvl/verilator_fpga/top_tb.sv`. That testbench also checks `LEDR[9:2]` against
+the PC every cycle, and for the single-cycle top decodes the seven-segment
+outputs back to hex and compares them too, so a wrong segment map fails in
+simulation rather than producing an unreadable board.
 
-`rv32i.s` completes in 1572 board cycles, which is 393 core cycles against the
-392 the behavioural model reports. Same core, same program, same cycle count,
-through an entirely different memory.
+Cycle counts match the behavioural model on both cores.
 
 **Not verified:** pin assignments, timing closure, and anything Quartus does.
-The `.sdc` constrains the board clock and declares `cpu_clk` as a generated
-clock, but whether the single-cycle critical path actually closes at 12.5 MHz
-is a question only the fitter can answer.
-
-## Known simplification
-
-`cpu_clk` is a counter bit used as a clock. Quartus will flag it, and it is the
-wrong way to build this. The clean version runs everything on the 50 MHz clock
-and gives `cpu.sv` a clock enable — which the pipelined iteration needs anyway,
-since it has to stall. See `docs/roadmap.md`; this whole directory is a demo
-path, not the destination.

@@ -16,7 +16,10 @@ VER_SRCS := $(PKG_SRCS) $(HDL_SRCS) $(VER_HVL)
 
 # FPGA build: the same core and pkg, but with the synthesizable memory and
 # board top from fpga/ instead of the behavioural model in hvl/common.
-FPGA_SRCS := $(shell find $(PWD)/../fpga -name '*.sv')
+# Same split as hdl/: shared board logic in fpga/common, the board top for
+# the selected core beside it. The single-cycle top needs a phase counter to
+# divide the clock; the pipelined one does not, which is the whole point.
+FPGA_SRCS := $(shell find $(PWD)/../fpga/common $(PWD)/../fpga/$(CORE) -name '*.sv')
 FPGA_HVL  := $(PWD)/../hvl/verilator_fpga/top_tb.sv $(PWD)/../hvl/verilator/verilator_harness.cpp
 FPGA_VER_SRCS := $(PKG_SRCS) $(HDL_SRCS) $(FPGA_SRCS) $(FPGA_HVL)
 
@@ -29,6 +32,10 @@ MEM_SIZE    := $(shell $(GET_OPTIONS) mem_size)
 # The pipelined core expects a registered memory read; the single-cycle core
 # expects a combinational one. Selecting the core selects the memory model.
 SYNC_MEM := $(if $(filter pipelined,$(CORE)),1,0)
+
+# The single-cycle board top drives the displays from the live fetch PC; the
+# pipelined one samples them. Only the former can be checked against the PC.
+LIVE_DISPLAY := $(if $(filter pipelined,$(CORE)),0,1)
 
 VDIR := verilator/$(CORE)
 
@@ -76,7 +83,7 @@ run_verilator_top_tb: $(VDIR)/build/Vtop_tb $(PROG)
 # ----------------------------------------------------------------------------
 fpga/build/Vtop_tb: $(FPGA_VER_SRCS) verilator_warn.vlt
 	mkdir -p fpga/build
-	cd fpga && verilator $(VER_FLAGS) $(FPGA_VER_SRCS) --top-module top_tb \
+	cd fpga && verilator $(VER_FLAGS) -GLIVE_DISPLAY=$(LIVE_DISPLAY) $(FPGA_VER_SRCS) --top-module top_tb \
 		|& tee build/compile.log
 	cd fpga/build && $(MAKE) --jobs=$(JOBS) -f Vtop_tb.mk |& tee -a compile.log
 	bash check_compile_error.sh fpga
@@ -91,6 +98,49 @@ run_fpga_sim: fpga/build/Vtop_tb $(PROG)
 		+TIMEOUT=$(shell echo $(TIMEOUT) '*' 4 | bc) \
 		|& tee simulation.log
 
+# ----------------------------------------------------------------------------
+# Unit tests. One self-checking testbench per module, built with --binary so
+# each drives its own clock and needs no C++ harness.
+#
+# Always compiled against hdl/common + hdl/pipelined regardless of CORE: the
+# stage modules only exist in the pipelined core, and the shared modules are
+# the same either way.
+# ----------------------------------------------------------------------------
+UNIT_PKG  := $(PWD)/../pkg/types.sv $(PWD)/../pkg/pipelined_types.sv
+UNIT_HDL  := $(shell find $(PWD)/../hdl/common $(PWD)/../hdl/pipelined -name '*.sv')
+UNIT_TBS  := $(sort $(wildcard $(PWD)/../hvl/unit/tb_*.sv))
+
+UNIT_FLAGS = --binary --timing -Wall --timescale 1ps/1ps \
+             +incdir+$(PWD)/../hvl/unit \
+             $(PWD)/verilator_warn.vlt
+
+.PHONY: unit
+unit:
+	@fail=0; pass=0; \
+	for tb in $(UNIT_TBS); do \
+	    name=$$(basename $$tb .sv); \
+	    mkdir -p unit/$$name; \
+	    if ! verilator $(UNIT_FLAGS) -Mdir unit/$$name/obj \
+	            $(UNIT_PKG) $(UNIT_HDL) $$tb \
+	            --top-module $$name -o $$name \
+	            > unit/$$name/build.log 2>&1; then \
+	        echo "BUILD FAIL $$name (see sim/unit/$$name/build.log)"; \
+	        fail=$$((fail+1)); continue; \
+	    fi; \
+	    if ./unit/$$name/obj/$$name > unit/$$name/run.log 2>&1; then \
+	        grep -h '^PASS' unit/$$name/run.log; pass=$$((pass+1)); \
+	    else \
+	        grep -hE '^(FAIL|  FAIL)' unit/$$name/run.log || echo "FAIL $$name"; \
+	        fail=$$((fail+1)); \
+	    fi; \
+	done; \
+	echo ""; \
+	if [ $$fail -ne 0 ]; then \
+	    echo -e "\033[0;31m$$fail unit test(s) failed, $$pass passed\033[0m"; exit 1; \
+	else \
+	    echo -e "\033[0;32mall $$pass unit tests passed\033[0m"; \
+	fi
+
 .PHONY: waves
 waves:
 	gtkwave $(VDIR)/dump.fst
@@ -98,4 +148,4 @@ waves:
 .PHONY: clean
 clean:
 	# All three are build directories under sim/, not the fpga/ source tree.
-	rm -rf $(PWD)/bin $(PWD)/verilator $(PWD)/fpga
+	rm -rf $(PWD)/bin $(PWD)/verilator $(PWD)/fpga $(PWD)/unit

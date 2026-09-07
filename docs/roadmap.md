@@ -19,8 +19,12 @@ Lives in `hdl/pipelined/`; `make CORE=pipelined` selects it, and the
 single-cycle core stays in the tree so the two can be compared directly.
 
 **Done when:** the same `testcode/` suite passes on both cores, retiring the
-same number of instructions, and the pipelined core closes timing at a
-meaningfully shorter clock period than the single-cycle one.
+same number of instructions, and the pipelined core runs meaningfully faster
+in wall-clock time on the same board.
+
+The first two hold. The third is measured at roughly 3.1x to 3.75x in
+simulation (see the FPGA section below), but rests on the pipelined core
+closing timing at 50 MHz, which is still unverified.
 
 ### A correction to the criterion this originally had
 
@@ -70,6 +74,29 @@ What a port needs beyond the memory:
   initialisation. The section-walking logic it needs is already there.
 - Observability: there is no `printf`, so halt and error go to LEDs and a
   register value to the 7-segment displays.
+
+### Measured, once the pipelined board top existed
+
+The single-cycle board top divides the 50 MHz board clock by four, because
+one instruction needs two memory edges. The pipelined one does not: IF and
+MEM hold different instructions, so both memory ports are enabled every
+cycle and the core runs directly at 50 MHz with no derived clock at all.
+
+Same programs, same board clock, in simulation:
+
+| Test | single-cycle | pipelined | speedup |
+|---|---|---|---|
+| `rv32i.s` | 1748 board cycles, 34.96 us | 466, 9.32 us | **3.75x** |
+| `ctest.c` | 852 board cycles, 17.04 us | 275, 5.50 us | **3.10x** |
+| `smoke.s` | 92 board cycles, 1.84 us | 30, 0.60 us | **3.07x** |
+
+This is the iteration 2 win, and note where it comes from: the pipelined
+core has *worse* IPC and uses more of its own cycles. It wins purely on
+clock rate. Wall-clock time is the axis that matters, not cycle count.
+
+It assumes the pipelined core closes timing at 50 MHz, which only the fitter
+can confirm. The single-cycle figure is on firmer ground, 12.5 MHz being
+slack-rich by construction.
 
 **Toolchain caveat.** This needs Quartus Prime Lite, which is free but
 proprietary. Yosys/nextpnr do not target MAX 10, so there is no open-source

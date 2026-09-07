@@ -9,6 +9,11 @@
 // Named top_tb so it reuses hvl/verilator/verilator_harness.cpp unchanged.
 
 module top_tb #(
+    // Whether the board top drives the seven segment displays straight from
+    // the fetch PC. The single-cycle top does; the pipelined top samples it
+    // slowly, so a live comparison there would be checking something the
+    // design does not claim.
+    parameter int          LIVE_DISPLAY = 1,
     parameter bit [31:0]   MEM_BASE = 32'h8000_0000,
     parameter int unsigned MEM_SIZE = 32'h0001_0000
 )(
@@ -81,9 +86,18 @@ module top_tb #(
     // Counts board cycles, so expect roughly four per instruction.
     always @(posedge clk) begin
         if (!rst) begin
-            if (displayed !== dut.imem_addr[23:0]) begin
-                $fatal(1, "TB Error: displays show %h but pc is %h",
-                       displayed, dut.imem_addr[23:0]);
+            if (LIVE_DISPLAY != 0) begin
+                if (displayed !== dut.imem_addr[23:0]) begin
+                    $fatal(1, "TB Error: displays show %h but pc is %h",
+                           displayed, dut.imem_addr[23:0]);
+                end
+            end else begin
+                // Sampled, so it cannot be compared against the live PC. It can
+                // still be required to be a legal decode, which is what catches
+                // a segment pattern that does not correspond to any digit.
+                if (displayed === 24'hxxxxxx) begin
+                    $fatal(1, "TB Error: displays show an undecodable pattern");
+                end
             end
             if (ledr[9:2] !== dut.imem_addr[9:2]) begin
                 $fatal(1, "TB Error: LEDR shows %b but pc[9:2] is %b",
@@ -93,8 +107,11 @@ module top_tb #(
                 $fatal(1, "TB Error: memory error LED lit after %0d board cycles", cycles);
             end
             if (ledr[0]) begin
-                $display("TB Info: halt LED lit after %0d board cycles (~%0d cpu cycles)",
-                         cycles, cycles / 4);
+                // Board cycles and elapsed time, not core cycles: the two tops
+                // divide the board clock differently, and wall-clock time on the
+                // same 50 MHz board is the only figure comparable between them.
+                $display("TB Info: halt LED lit after %0d board cycles (%0d ns at 50 MHz)",
+                         cycles, cycles * 20);
                 $finish;
             end
             if (cycles >= timeout) begin
