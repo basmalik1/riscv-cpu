@@ -11,3 +11,4 @@ lint/*.log
 *.o
 *.d
 *.log
+sim/fpga/

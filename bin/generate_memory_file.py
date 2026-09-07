@@ -2,9 +2,11 @@
 """Compile a RISC-V .s/.c source (or take an existing .elf) and emit the
 word-addressable memory image that hvl/common/magic_memory.sv loads.
 
-Usage: generate_memory_file.py <src.s | src.c | prog.elf> [more sources...]
+Usage: generate_memory_file.py [--mif] <src.s | src.c | prog.elf> [sources...]
 
 Outputs into sim/bin/: <stem>.elf, <stem>.dis, memory_32.lst
+With --mif, also memory.mif, for initialising Quartus block RAM through a
+(* ram_init_file *) attribute. See fpga/mem_sync.sv.
 """
 
 import os
@@ -45,7 +47,9 @@ def run(cmd, what):
         die(f"{what} failed")
 
 
-sources = [os.path.abspath(v) for v in sys.argv[1:]]
+args = sys.argv[1:]
+want_mif = "--mif" in args
+sources = [os.path.abspath(v) for v in args if not v.startswith("--")]
 if not sources:
     die(f"no input file\n[INFO]  Usage: {os.path.basename(__file__)} <src.s | src.c | prog.elf>")
 
@@ -60,6 +64,7 @@ elf_file = os.path.join(WORK_DIR, stem + ".elf")
 dis_file = os.path.join(WORK_DIR, stem + ".dis")
 bin_file = os.path.join(WORK_DIR, stem + ".bin")
 lst_file = os.path.join(WORK_DIR, "memory_32.lst")
+mif_file = os.path.join(WORK_DIR, "memory.mif")
 
 for stale in (dis_file, bin_file, lst_file):
     if os.path.isfile(stale):
@@ -94,6 +99,8 @@ if hdrs.returncode != 0:
 # objdump -h prints a two-line record per section; line 1 holds name/size/VMA.
 sections = [line.split() for line in hdrs.stdout.splitlines()[5::2]]
 
+image = {}          # word index -> value, for the optional .mif
+
 with open(lst_file, "w") as lst:
     for sec in sections:
         name, size, vma = sec[1], int(sec[2], 16), int(sec[3], 16)
@@ -113,10 +120,30 @@ with open(lst_file, "w") as lst:
             continue
 
         # $readmemh addresses index the array, which starts at mem_base.
-        lst.write(f"@{(vma - mem_base) >> 2:08x}\n")
+        base_idx = (vma - mem_base) >> 2
+        lst.write(f"@{base_idx:08x}\n")
         for i in range(0, len(blob), 4):
             word = int.from_bytes(blob[i:i + 4].ljust(4, b"\x00"), "little")
             lst.write(f"{word:08x}\n")
+            image[base_idx + i // 4] = word
         lst.write("\n")
 
 print(f"[INFO]  Wrote memory contents to {lst_file}")
+
+if want_mif:
+    # Quartus wants every address covered, so gaps are filled explicitly
+    # rather than left out the way $readmemh permits.
+    depth = mem_size // 4
+    with open(mif_file, "w") as mif:
+        print(f"DEPTH = {depth};", file=mif)
+        print("WIDTH = 32;", file=mif)
+        print("ADDRESS_RADIX = HEX;", file=mif)
+        print("DATA_RADIX = HEX;", file=mif)
+        print("", file=mif)
+        print("CONTENT", file=mif)
+        print("BEGIN", file=mif)
+        print(f"    [0..{depth - 1:x}] : 00000000;", file=mif)
+        for idx in sorted(image):
+            print(f"    {idx:x} : {image[idx]:08x};", file=mif)
+        print("END;", file=mif)
+    print(f"[INFO]  Wrote Quartus init image to {mif_file}")

@@ -1,0 +1,3 @@
+QUARTUS_VERSION = "23.1"
+
+PROJECT_REVISION = "riscv_cpu"

@@ -8,6 +8,12 @@ VER_HVL  := $(shell find $(PWD)/../hvl/common $(PWD)/../hvl/verilator \
 HDRS     := $(shell find $(PWD)/../hvl -name '*.svh')
 VER_SRCS := $(PKG_SRCS) $(HDL_SRCS) $(VER_HVL)
 
+# FPGA build: the same core and pkg, but with the synthesizable memory and
+# board top from fpga/ instead of the behavioural model in hvl/common.
+FPGA_SRCS := $(shell find $(PWD)/../fpga -name '*.sv')
+FPGA_HVL  := $(PWD)/../hvl/verilator_fpga/top_tb.sv $(PWD)/../hvl/verilator/verilator_harness.cpp
+FPGA_VER_SRCS := $(PKG_SRCS) $(HDL_SRCS) $(FPGA_SRCS) $(FPGA_HVL)
+
 GET_OPTIONS := python3 $(PWD)/../bin/get_options.py
 CLOCK       := $(shell $(GET_OPTIONS) clock)
 TIMEOUT     := $(shell $(GET_OPTIONS) timeout)
@@ -51,10 +57,32 @@ run_verilator_top_tb: verilator/build/Vtop_tb $(PROG)
 		$(MEM_FILL_ARG) \
 		|& tee simulation.log
 
+# ----------------------------------------------------------------------------
+# FPGA path, simulated. Proves fpga/top_de10lite.sv actually carries the core
+# before anything reaches a board. The board clock is 50 MHz, so the timeout
+# here counts board cycles -- roughly four per instruction.
+# ----------------------------------------------------------------------------
+fpga/build/Vtop_tb: $(FPGA_VER_SRCS) verilator_warn.vlt
+	mkdir -p fpga/build
+	cd fpga && verilator $(VER_FLAGS) $(FPGA_VER_SRCS) --top-module top_tb \
+		|& tee build/compile.log
+	cd fpga/build && $(MAKE) --jobs=$(JOBS) -f Vtop_tb.mk |& tee -a compile.log
+
+.PHONY: run_fpga_sim
+run_fpga_sim: fpga/build/Vtop_tb $(PROG)
+	@test -n "$(PROG)" || (echo "Usage: make $@ PROG=../testcode/<test>.s" && false)
+	python3 $(PWD)/../bin/generate_memory_file.py $(PROG)
+	cp $(PWD)/bin/memory_32.lst fpga/memory_32.lst
+	cd fpga && ./build/Vtop_tb \
+		+CLOCK_PERIOD_PS=20000 \
+		+TIMEOUT=$(shell echo $(TIMEOUT) '*' 4 | bc) \
+		|& tee simulation.log
+
 .PHONY: waves
 waves:
 	gtkwave verilator/dump.fst
 
 .PHONY: clean
 clean:
-	rm -rf bin verilator
+	# All three are build directories under sim/, not the fpga/ source tree.
+	rm -rf $(PWD)/bin $(PWD)/verilator $(PWD)/fpga

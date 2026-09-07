@@ -1,0 +1,25 @@
+# Quartus settings for the DE10-Lite build.
+#
+# PIN ASSIGNMENTS ARE DELIBERATELY NOT IN THIS FILE. See fpga/README.md --
+# import them from Terasic's own file for your board revision instead. The port
+# names below match Terasic's conventions so their file drops straight in.
+
+set_global_assignment -name FAMILY "MAX 10"
+set_global_assignment -name DEVICE 10M50DAF484C7G
+set_global_assignment -name TOP_LEVEL_ENTITY top_de10lite
+set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
+
+set_global_assignment -name SYSTEMVERILOG_FILE ../pkg/types.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../hdl/alu.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../hdl/regfile.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../hdl/control.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../hdl/cpu.sv
+set_global_assignment -name SYSTEMVERILOG_FILE mem_sync.sv
+set_global_assignment -name SYSTEMVERILOG_FILE seven_seg.sv
+set_global_assignment -name SYSTEMVERILOG_FILE top_de10lite.sv
+
+set_global_assignment -name SDC_FILE riscv_cpu.sdc
+
+# Unused pins as inputs is the safe default on a board where other devices may
+# be driving them.
+set_global_assignment -name RESERVE_ALL_UNUSED_PINS "AS INPUT TRI-STATED"
