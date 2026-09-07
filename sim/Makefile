@@ -37,7 +37,13 @@ SYNC_MEM := $(if $(filter pipelined,$(CORE)),1,0)
 # pipelined one samples them. Only the former can be checked against the PC.
 LIVE_DISPLAY := $(if $(filter pipelined,$(CORE)),0,1)
 
-VDIR := verilator/$(CORE)
+# Per-core build directories, for both paths. Sharing one lets a build from
+# the other core look up to date: make finds the binary newer than the
+# sources, skips the rebuild, and runs the WRONG CORE while reporting
+# entirely plausible numbers. Not hypothetical -- it happened here, and the
+# fpga path went on doing it after the simulation path was fixed.
+VDIR  := verilator/$(CORE)
+FVDIR := fpga/$(CORE)
 
 JOBS := $(shell nproc)
 
@@ -81,19 +87,19 @@ run_verilator_top_tb: $(VDIR)/build/Vtop_tb $(PROG)
 # before anything reaches a board. The board clock is 50 MHz, so the timeout
 # here counts board cycles -- roughly four per instruction.
 # ----------------------------------------------------------------------------
-fpga/build/Vtop_tb: $(FPGA_VER_SRCS) verilator_warn.vlt
-	mkdir -p fpga/build
-	cd fpga && verilator $(VER_FLAGS) -GLIVE_DISPLAY=$(LIVE_DISPLAY) $(FPGA_VER_SRCS) --top-module top_tb \
+$(FVDIR)/build/Vtop_tb: $(FPGA_VER_SRCS) verilator_warn.vlt
+	mkdir -p $(FVDIR)/build
+	cd $(FVDIR) && verilator $(VER_FLAGS) -GLIVE_DISPLAY=$(LIVE_DISPLAY) $(FPGA_VER_SRCS) --top-module top_tb \
 		|& tee build/compile.log
-	cd fpga/build && $(MAKE) --jobs=$(JOBS) -f Vtop_tb.mk |& tee -a compile.log
-	bash check_compile_error.sh fpga
+	cd $(FVDIR)/build && $(MAKE) --jobs=$(JOBS) -f Vtop_tb.mk |& tee -a compile.log
+	bash check_compile_error.sh $(FVDIR)
 
 .PHONY: run_fpga_sim
-run_fpga_sim: fpga/build/Vtop_tb $(PROG)
+run_fpga_sim: $(FVDIR)/build/Vtop_tb $(PROG)
 	@test -n "$(PROG)" || (echo "Usage: make $@ PROG=../testcode/<test>.s" && false)
 	python3 $(PWD)/../bin/generate_memory_file.py $(PROG)
-	cp $(PWD)/bin/memory_32.lst fpga/memory_32.lst
-	cd fpga && ./build/Vtop_tb \
+	cp $(PWD)/bin/memory_32.lst $(FVDIR)/memory_32.lst
+	cd $(FVDIR) && ./build/Vtop_tb \
 		+CLOCK_PERIOD_PS=20000 \
 		+TIMEOUT=$(shell echo $(TIMEOUT) '*' 4 | bc) \
 		|& tee simulation.log
