@@ -30,7 +30,20 @@ import rv32i_types::*;
     output logic        halt,
 
     // One instruction retires every cycle by construction.
-    output logic        commit
+    output logic        commit,
+
+    // Commit trace, for lockstep against a golden model. Says what the
+    // instruction that retired this cycle actually did: where it was, and what
+    // it wrote. bin/compare_spike.py checks a log of these against
+    // `spike --log-commits` on the same program.
+    //
+    // The instruction word is deliberately NOT here. The testbench reads it
+    // back out of its own memory image at commit_pc, which costs nothing and
+    // keeps 96 bits of verification-only state out of the pipeline registers.
+    output logic [31:0] commit_pc,
+    output logic        commit_regf_we,
+    output logic [4:0]  commit_rd_s,
+    output logic [31:0] commit_rd_v
 );
 
     // ------------------------------------------------------------------
@@ -43,6 +56,12 @@ import rv32i_types::*;
     assign inst      = imem_rdata;
     assign halt      = (inst == HALT_INST);
     assign commit    = ~rst;
+
+    // Free here: every signal the trace needs is already the live one, because
+    // fetch, execute and writeback are the same cycle.
+    assign commit_pc      = pc;
+    assign commit_regf_we = regf_we;
+    assign commit_rd_s    = inst[11:7];
     assign imem_addr = pc;
     assign funct3    = inst[14:12];
 
@@ -232,6 +251,8 @@ import rv32i_types::*;
     // ------------------------------------------------------------------
     // writeback
     // ------------------------------------------------------------------
+    assign commit_rd_v = rd_v;
+
     always_comb begin
         unique case (wb_sel)
             wb_alu: rd_v = ex_result;

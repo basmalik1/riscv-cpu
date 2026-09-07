@@ -108,29 +108,36 @@ Read the ratio between the cores, not the absolute figures.
 Generic mapping, no library:
 
 ```
-single_cycle   cells 21694    logic depth 498
-pipelined      cells 17941    logic depth 58
+single_cycle   cells 21645    logic depth 498
+pipelined      cells 18127    logic depth 59
 ```
 
 Mapped to Nangate45, area:
 
 ```
-single_cycle   17946 cells   24939.9 um2
-pipelined      18911 cells   26851.6 um2
+single_cycle   17938 cells   24901.9 um2
+pipelined      18924 cells   26956.4 um2
 ```
 
 Timing via OpenSTA:
 
 ```
-single_cycle   critical path 27.448 ns   fmax  36.4 MHz
-pipelined      critical path  4.431 ns   fmax 225.6 MHz
+single_cycle   critical path 27.686 ns   fmax  36.1 MHz
+pipelined      critical path  4.636 ns   fmax 215.7 MHz
 ```
+
+Those include the RVFI-style commit ports both cores expose for golden-model
+lockstep. They cost 0.4% area on the pipelined core and nothing measurable on
+the single-cycle one, and neither core's critical path runs through them --
+worth checking rather than assuming, since verification-only logic inflating
+the number it is meant to verify would be a quiet way to be wrong. See
+[../docs/spike.md](../docs/spike.md).
 
 ### What the M extension did to these numbers
 
 Before RV32M the two critical paths were 4.432 ns and 4.140 ns, a 7% gap this
 flow cannot support a claim about. Adding multiply and divide separated them by
-**6.2x**, and the reason is structural rather than incidental: a divide is the
+**6.0x**, and the reason is structural rather than incidental: a divide is the
 first operation whose latency the two designs are forced to handle differently.
 The pipelined core can stall, so it takes a one-bit-per-cycle divider that costs
 34 cycles and almost no delay. The single-cycle core cannot, so it takes a
@@ -149,7 +156,7 @@ The multiply is combinational in both cores: at 2.923 ns it fits under the
 pipelined core's existing path, so it costs area and no cycles. The divide is
 where the designs part company, and 21.4 ns against 1.7 ns is why.
 
-### Is 6.2x trustworthy, when 7% was not?
+### Is 6.0x trustworthy, when 7% was not?
 
 Yes, and the reason is worth stating rather than asserting. The known defect in
 this flow is that `abc -liberty` maps logic to cells but inserts no buffers and
@@ -157,8 +164,8 @@ resizes no gates, so a high-fanout net is charged its whole capacitance through
 one gate. Look at where each path spends its time:
 
 ```
-single_cycle   27.448 ns over 525 cells, largest single gate 0.605 ns (AOI22_X1)
-pipelined       4.431 ns over  17 cells, largest single gate 3.062 ns (MUX2_X1)
+single_cycle   27.686 ns over 504 cells, largest single gate 0.718 ns (NOR3_X1)
+pipelined       4.636 ns over  14 cells, largest single gate 3.181 ns (MUX2_X1)
 ```
 
 The single-cycle path is now a genuine measurement: half a thousand gates at
@@ -166,13 +173,13 @@ roughly 0.05 ns each, which is what a ripple through a divider actually looks
 like. No gate dominates and there is nothing for buffering to fix.
 
 The pipelined path still shows the artifact -- 69% of it in one mux -- so its
-true delay is **shorter** than 4.431 ns. The error therefore runs in the
-direction that makes the pipelined core look worse, which makes 6.2x a floor
+true delay is **shorter** than 4.636 ns. The error therefore runs in the
+direction that makes the pipelined core look worse, which makes 6.0x a floor
 rather than an estimate. That is the opposite of the situation at 7%, where the
 artifact was larger than the difference being claimed.
 
 Logic depth corroborates it independently, and is immune to buffering because
-it counts gates: **498 against 58, or 8.6x**.
+it counts gates: **498 against 59, or 8.4x**.
 
 ### Where the critical paths are
 
@@ -180,8 +187,8 @@ Yosys reports the endpoints:
 
 | Core | longest path |
 |---|---|
-| single-cycle | `regfile_inst.data[9]` -> `regfile_inst.rd_v[31]` |
-| pipelined | `mem_wb[78]` -> `ex_mem_n[141]` |
+| single-cycle | register file -> the divider -> `regfile_inst.rd_v[31]` |
+| pipelined | `mem_wb` -> `ex_mem_n[141]` |
 
 The single-cycle path leaves the register file, goes through the divider, and
 comes back to the register file's write port. That is the single-cycle contract
@@ -191,7 +198,7 @@ one edge.
 The pipelined path is unchanged by M: MEM/WB, through the writeback mux,
 through the forwarding network, into the ALU. Forwarding is still what bounds
 this core, which is why adding a 2.9 ns multiplier alongside the ALU moved it
-only from 4.140 to 4.431 ns -- the multiplier is not on the critical path, the
+only from 4.140 to 4.636 ns -- the multiplier is not on the critical path, the
 result mux in front of EX/MEM is.
 
 ### Memory is still not in this measurement
@@ -220,7 +227,7 @@ the honest shape of a one-bit-per-cycle divider, and radix-4 would halve it.
 
 Two independent figures, then, measuring different things:
 
-- **Critical path, 6.2x** in favour of the pipelined core, floor not estimate.
+- **Critical path, 6.0x** in favour of the pipelined core, floor not estimate.
   Internal logic only.
 - **Board wall-clock, 3.07x to 3.67x** on integer code, and **0.87x** on
   divide-heavy code. Dominated by memory access structure, not internal logic.

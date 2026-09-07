@@ -16,6 +16,9 @@ import pipelined_types::*;
     logic [31:0] wb_value;
     logic [4:0]  rd_s;
     logic        regf_we, halt, commit;
+    logic [31:0] commit_pc, commit_rd_v;
+    logic        commit_regf_we;
+    logic [4:0]  commit_rd_s;
 
     stage_wb dut (.*);
 
@@ -81,6 +84,33 @@ import pipelined_types::*;
         mem_wb.valid = 1'b1; #1;
         expect_bit("valid halt reported",    halt,    1'b1);
         expect_bit("valid commit reported",  commit,  1'b1);
+
+        // ---- the commit trace ---------------------------------------------
+        // What the lockstep comparator reads. The PC is derived from pc4
+        // rather than carried, so it is worth pinning that the subtraction is
+        // the right way round -- an off-by-four here would make every
+        // instruction in the log look like its neighbour.
+        mem_wb          = '0;
+        mem_wb.valid    = 1'b1;
+        mem_wb.regf_we  = 1'b1;
+        mem_wb.wb_sel   = wb_alu;
+        mem_wb.alu_f    = 32'h0000_002a;
+        mem_wb.rd_s     = 5'd7;
+        mem_wb.pc4      = 32'h8000_0104;
+        #1;
+        expect_eq ("commit_pc is pc4 minus four", commit_pc,      32'h8000_0100);
+        expect_eq ("commit_rd_s",         {27'd0, commit_rd_s},   32'd7);
+        expect_eq ("commit_rd_v is the wb value", commit_rd_v,    32'h0000_002a);
+        expect_bit("commit_regf_we",              commit_regf_we, 1'b1);
+
+        // A squashed instruction wrote nothing, whatever its payload says.
+        mem_wb.valid = 1'b0; #1;
+        expect_bit("squashed reports no write",   commit_regf_we, 1'b0);
+
+        // A load reports the extended value, not the raw word: the comparator
+        // checks it against what Spike says landed in the register.
+        load(3'b000, 2'd0); mem_wb.rd_s = 5'd3; mem_wb.pc4 = 32'h8000_0008; #1;
+        expect_eq("commit_rd_v is extended", commit_rd_v, 32'hffff_ffef);
 
         report("stage_wb");
     end

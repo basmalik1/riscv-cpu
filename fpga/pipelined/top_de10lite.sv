@@ -43,6 +43,11 @@ module top_de10lite #(
     logic [3:0]  dmem_rmask, dmem_wmask;
     logic        mem_error, core_halt, core_commit;
 
+    // The commit trace ports are deliberately left unconnected. They exist for
+    // lockstep against Spike, which happens in simulation; on a board there is
+    // nothing to compare against and nowhere to put a log, and the fitter
+    // strips them along with the logic that feeds them.
+    /* verilator lint_off PINMISSING */
     cpu #(
         .RESET_PC   (MEM_BASE)
     ) core (
@@ -58,6 +63,7 @@ module top_de10lite #(
         .halt       (core_halt),
         .commit     (core_commit)
     );
+    /* verilator lint_on PINMISSING */
 
     // Both ports enabled unconditionally. IF and MEM hold different
     // instructions, so there is nothing to arbitrate between them.

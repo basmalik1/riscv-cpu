@@ -17,7 +17,14 @@ import pipelined_types::*;
     // past a taken branch is fetched speculatively and squashed, so decoding
     // halt at fetch would report a halt the program never executed.
     output logic        halt,
-    output logic        commit
+    output logic        commit,
+
+    // Commit trace. Same reasoning as halt: only an instruction that reaches
+    // WB actually happened, so this is the only stage that can report it.
+    output logic [31:0] commit_pc,
+    output logic        commit_regf_we,
+    output logic [4:0]  commit_rd_s,
+    output logic [31:0] commit_rd_v
 );
 
     logic [31:0] load_word, load_data;
@@ -48,5 +55,14 @@ import pipelined_types::*;
     assign regf_we = mem_wb.valid && mem_wb.regf_we;
     assign halt    = mem_wb.valid && mem_wb.is_halt;
     assign commit  = mem_wb.valid;
+
+    // pc4 is carried for the jal/jalr link value; the instruction's own PC is
+    // four below it. Derived rather than carried because adding a pc field to
+    // ex_mem_t and mem_wb_t would be 64 flip-flops of verification-only state,
+    // and this subtract feeds nothing but an output port.
+    assign commit_pc      = mem_wb.pc4 - 32'd4;
+    assign commit_regf_we = regf_we;
+    assign commit_rd_s    = mem_wb.rd_s;
+    assign commit_rd_v    = wb_value;
 
 endmodule

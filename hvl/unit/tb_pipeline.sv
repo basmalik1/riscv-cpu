@@ -30,6 +30,9 @@ import pipelined_types::*;
     logic [31:0] dmem_addr, dmem_wdata, dmem_rdata;
     logic [3:0]  dmem_rmask, dmem_wmask;
     logic        halt, commit;
+    logic [31:0] commit_pc, commit_rd_v;
+    logic        commit_regf_we;
+    logic [4:0]  commit_rd_s;
 
     // RESET_PC is 0 here so a word address is just an array index.
     cpu #(.RESET_PC(32'h0)) dut (
@@ -38,7 +41,9 @@ import pipelined_types::*;
         .dmem_addr(dmem_addr), .dmem_wdata(dmem_wdata),
         .dmem_rmask(dmem_rmask), .dmem_wmask(dmem_wmask),
         .dmem_rdata(dmem_rdata),
-        .halt(halt), .commit(commit));
+        .halt(halt), .commit(commit),
+        .commit_pc(commit_pc), .commit_regf_we(commit_regf_we),
+        .commit_rd_s(commit_rd_s), .commit_rd_v(commit_rd_v));
 
     // Registered reads, matching what the core is written against.
     logic [31:0] mem [WORDS];

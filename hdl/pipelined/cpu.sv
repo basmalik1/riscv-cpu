@@ -44,7 +44,15 @@ import pipelined_types::*;
     input  logic [31:0] dmem_rdata,
 
     output logic        halt,
-    output logic        commit
+    output logic        commit,
+
+    // Commit trace, for lockstep against a golden model. See stage_wb.sv; the
+    // single-cycle core exposes the same five signals, so one testbench and one
+    // comparator serve both.
+    output logic [31:0] commit_pc,
+    output logic        commit_regf_we,
+    output logic [4:0]  commit_rd_s,
+    output logic [31:0] commit_rd_v
 );
 
     if_id_t  if_id_n,  if_id;
@@ -213,13 +221,17 @@ import pipelined_types::*;
     // WB
     // ==================================================================
     stage_wb u_wb (
-        .mem_wb     (mem_wb),
-        .dmem_rdata (dmem_rdata),
-        .wb_value   (wb_value),
-        .rd_s       (wb_rd_s),
-        .regf_we    (wb_regf_we),
-        .halt       (halt),
-        .commit     (commit)
+        .mem_wb         (mem_wb),
+        .dmem_rdata     (dmem_rdata),
+        .wb_value       (wb_value),
+        .rd_s           (wb_rd_s),
+        .regf_we        (wb_regf_we),
+        .halt           (halt),
+        .commit         (commit),
+        .commit_pc      (commit_pc),
+        .commit_regf_we (commit_regf_we),
+        .commit_rd_s    (commit_rd_s),
+        .commit_rd_v    (commit_rd_v)
     );
 
     // ==================================================================

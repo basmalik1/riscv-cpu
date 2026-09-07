@@ -52,6 +52,12 @@ JOBS := $(shell nproc)
 MEM_FILL ?=
 MEM_FILL_ARG := $(if $(MEM_FILL),+MEM_FILL=$(MEM_FILL),)
 
+# Optional: write a commit trace, one line per retired instruction, for
+# lockstep against a golden model. Unset costs nothing -- the testbench
+# opens no file and the trace task never runs.
+COMMITLOG ?=
+COMMITLOG_ARG := $(if $(COMMITLOG),+COMMITLOG=$(COMMITLOG),)
+
 # Verilator's default --trace-max-array of 32 is deliberate here: it keeps the
 # 32-entry register file in the waveform while leaving the 16384-word memory
 # out. Raising it drags every memory word in as its own signal, which is ~16k
@@ -80,7 +86,45 @@ run_verilator_top_tb: $(VDIR)/build/Vtop_tb $(PROG)
 		+TIMEOUT=$(TIMEOUT) \
 		+MEMLST=$(PWD)/bin/memory_32.lst \
 		$(MEM_FILL_ARG) \
+		$(COMMITLOG_ARG) \
 		|& tee simulation.log
+
+# ----------------------------------------------------------------------------
+# Golden-model lockstep.
+#
+# `lockstep` runs the program on the core and on Spike and compares every
+# retired instruction. `crosscheck` compares the two CORES against each other,
+# which needs no Spike at all and is a strong check in its own right: the two
+# microarchitectures share only the decoder, the ALU and the mdu, so agreeing
+# instruction-for-instruction is not something a timing bug survives.
+# ----------------------------------------------------------------------------
+TRACE := $(PWD)/$(VDIR)/commit.log
+ELF   := $(PWD)/bin/$(basename $(notdir $(PROG))).elf
+
+.PHONY: trace
+# A program that fails does so by spinning until the testbench gives up,
+# which is a non-zero exit. That must NOT stop the comparison: a failing
+# run is the one whose trace is worth reading, and `where did it first
+# diverge` is the whole reason this target exists. Hence the leading `-`.
+trace:
+	@test -n "$(PROG)" || (echo "Usage: make $@ PROG=../testcode/<test>.s" && false)
+	@rm -f $(TRACE)
+	-@$(MAKE) --no-print-directory run_verilator_top_tb PROG=$(PROG) COMMITLOG=$(TRACE) > /dev/null 2>&1
+	@test -s $(TRACE) || (echo "$(CORE): nothing was traced -- see sim/$(VDIR)/simulation.log" && false)
+	@echo "$(CORE): $$(wc -l < $(TRACE)) commits -> $(TRACE)"
+
+.PHONY: lockstep
+lockstep: trace
+	python3 $(PWD)/../bin/compare_spike.py $(TRACE) $(ELF)
+
+.PHONY: crosscheck
+crosscheck:
+	@test -n "$(PROG)" || (echo "Usage: make $@ PROG=../testcode/<test>.s" && false)
+	@$(MAKE) --no-print-directory CORE=single_cycle trace PROG=$(PROG)
+	@$(MAKE) --no-print-directory CORE=pipelined    trace PROG=$(PROG)
+	python3 $(PWD)/../bin/compare_spike.py --diff \
+		$(PWD)/verilator/single_cycle/commit.log \
+		$(PWD)/verilator/pipelined/commit.log
 
 # ----------------------------------------------------------------------------
 # FPGA path, simulated. Proves fpga/top_de10lite.sv actually carries the core

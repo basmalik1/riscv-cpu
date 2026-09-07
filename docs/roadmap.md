@@ -132,7 +132,7 @@ M, both cores computed everything in one pass of combinational logic and
 differed only in how many registers that logic was cut into. A divide cannot be
 done that way at any sensible clock, so the pipelined core stalls and the
 single-cycle core pays 21 ns. That turned the clock-period comparison from a 7%
-difference this flow cannot measure into a 6.2x one it can.
+difference this flow cannot measure into a 6.0x one it can.
 
 **A divide is a variable-latency functional unit with a ready handshake**,
 which is the structure iteration 3 is built out of. Learning it inside a
@@ -197,28 +197,28 @@ Two consequences worth remembering:
 
 ## Infrastructure deferred until it is needed
 
-- **Spike lockstep.** RVFI-style commit ports on `cpu.sv` plus a Python
-  comparator against `spike --log-commits`. Self-checking assembly was enough
-  through iteration 1 and is starting to strain: RV32M added four values the
-  spec fixes by decree, and hand-written tests only cover the corner cases
-  somebody thought of. This becomes genuinely hard to retrofit at iteration 3,
-  once commits reorder, so it is the next thing worth doing rather than the
-  next thing after that. The memory base is already `0x8000_0000` — Spike's
-  default — so nothing needs remapping when it lands.
+- **Spike lockstep.** *Done.* Both cores expose RVFI-style commit ports, the
+  testbench writes one line per retired instruction under `+COMMITLOG=`, and
+  `bin/compare_spike.py` walks that against `spike --log-commits` on the same
+  program. `make lockstep` checks a core against the reference model; `make
+  crosscheck` checks the two cores against each other and needs no Spike at
+  all. Both are in [spike.md](spike.md), including what is compared and what
+  is not -- memory writes are not, which is the honest remaining gap.
+
 - **Nanosecond timing.** *Done.* `synth/` now maps to Nangate45 and runs
-  OpenSTA: single-cycle 27.448 ns against pipelined 4.431 ns, a 6.2x gap, with
-  logic depth corroborating at 498 against 58. Neither core infers a latch and
+  OpenSTA: single-cycle 27.686 ns against pipelined 4.636 ns, a 6.0x gap, with
+  logic depth corroborating at 498 against 59. Neither core infers a latch and
   both pass `hierarchy -check`, which is the real synthesizability result —
   this RTL maps to gates rather than merely linting.
 
   Two caveats survive, and one has been resolved. The pipelined figure is still
   inflated by the missing buffering pass (69% of its path is one unbuffered
-  mux), so 6.2x is a floor rather than an estimate; closing that needs
+  mux), so 6.0x is a floor rather than an estimate; closing that needs
   OpenROAD's `repair_design`, which means installing OpenROAD proper. And
   memory remains outside the synthesized module, so the single-cycle number
   omits the access that forces its board top to 12.5 MHz — it understates the
   gap further. What is no longer a caveat is the size of the difference: at 7%
-  the measurement error swamped the claim, and at 6.2x it does not.
+  the measurement error swamped the claim, and at 6.0x it does not.
 
   Note also that Yosys cannot read this design directly. Its built-in frontend
   rejects any user-defined type declared at file scope, package or not, though

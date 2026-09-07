@@ -1,8 +1,9 @@
 # RISC-V CPU
 
 An RV32IM processor built with an entirely open-source flow: Verilator for lint
-and simulation, GTKWave for waves, Yosys and sv2v for synthesis, OpenSTA
-against the Nangate45 cell library for timing, and Make and Python for glue.
+and simulation, Spike as the golden model, GTKWave for waves, Yosys and sv2v
+for synthesis, OpenSTA against the Nangate45 cell library for timing, and Make
+and Python for glue.
 
 Two cores share the same ports and the same tests — a single-cycle one and a
 five-stage pipelined one — so they can be compared directly. Both implement the
@@ -30,19 +31,24 @@ testcode/  test programs
 
 ## Tools
 
-Everything is open source. Simulation and the whole test suite need only the
-first three rows; the last four are for synthesis and timing, which are
-optional.
+Everything is open source. Simulation and the self-checking tests need only the
+first three rows; Spike adds golden-model lockstep, and the last four are for
+synthesis and timing. Everything after the third row is optional.
 
 | Tool | Used for | Licence | Install |
 |---|---|---|---|
 | [Verilator](https://verilator.org) | lint and simulation | LGPL-3.0 / Artistic-2.0 | apt |
 | [GTKWave](https://gtkwave.sourceforge.net) | waveforms | GPL-2.0 | apt |
 | [RISC-V GCC](https://github.com/riscv-collab/riscv-gnu-toolchain) | assembling and compiling tests | GPL-3.0 | apt |
+| [Spike](https://github.com/riscv-software-src/riscv-isa-sim) | reference model, for lockstep | BSD-3-Clause | source build |
 | [Yosys](https://yosyshq.net/yosys/) | synthesis | ISC | apt |
 | [sv2v](https://github.com/zachjs/sv2v) | SystemVerilog to Verilog-2005, in front of Yosys | BSD-3-Clause | binary release |
 | [OpenSTA](https://github.com/parallaxsw/OpenSTA) | static timing analysis | GPL-3.0 | source build |
 | [Nangate45](https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts) | open 45nm standard cell library, for area and timing | see below | `make -C synth pdk` |
+
+`Spike` is the RISC-V reference simulator, and every instruction the core
+retires is checked against it — see [docs/spike.md](docs/spike.md) for the build
+and for what is and is not compared.
 
 `sv2v` is needed because Yosys's built-in frontend rejects any user-defined type
 declared at file scope. `OpenSTA` is needed because Yosys's own `sta` command
@@ -155,6 +161,19 @@ a cycle-level harness for the assembled pipeline:
 cd sim && make unit
 ```
 
+Check every retired instruction against Spike, and the two cores against each
+other:
+
+```bash
+cd sim && make lockstep   PROG=../testcode/rv32i.s   # core vs the golden model
+cd sim && make crosscheck PROG=../testcode/rv32i.s   # core vs core, no Spike needed
+```
+
+`crosscheck` needs no Spike and is worth reaching for first when something
+breaks: the two microarchitectures share only the decoder, the ALU and the
+multiply/divide unit, so it says immediately whether a bug is in the shared
+logic or in one core's control. See [docs/spike.md](docs/spike.md).
+
 View the waveform:
 
 ```bash
@@ -190,16 +209,26 @@ those numbers live.
 ## Status
 
 Both cores execute the full RV32I base integer set and the M extension, pass
-the same tests, and retire identical instruction counts. Verified at three
-levels: a 126-check ISA regression across two programs, 614 unit checks
-including a cycle-level pipeline harness, and mutation testing of all of it —
-deliberate bugs are injected to confirm the suites can actually fail.
+the same tests, and produce byte-identical commit traces. Verified at four
+levels: every retired instruction checked against Spike, a 126-check ISA
+regression across two programs, 623 unit checks including a cycle-level
+pipeline harness, and mutation testing of all of it — deliberate bugs are
+injected to confirm the suites can actually fail.
 
-The three layers catch different things, and the M work produced a clean
-example. Failing to bubble EX/MEM while a divide is running retires 33 phantom
-instructions per divide, each writing a partial quotient to a register nothing
-reads yet. Every program still gets the right answer; only the cycle-level
-harness sees it.
+Each layer catches something the others cannot, and there is evidence for that
+rather than an assumption:
+
+- **Lockstep** removes the need for an assertion to exist. Delete the eight
+  `mulh` checks from `rv32m.s` and break `mulh`, and the program passes while
+  Spike catches it. `rv32i.s` executes 471 instructions and asserts on 66; the
+  other 405 are checked by nothing else.
+- **The cycle-level harness** catches timing, which Spike has no notion of.
+  Failing to bubble EX/MEM during a divide retires 33 phantom instructions per
+  divide, each writing a partial quotient to a register nothing reads yet —
+  every program still gets the right answer, and every commit log still matches.
+- **Unit tests** reach inputs no program produces. A `srl` that ignores the
+  5-bit shift mask needs a shift of 32 to show, and nothing shifts that far.
+- **Programs** are the end-to-end check that the parts add up.
 
 Measured:
 
@@ -207,21 +236,21 @@ Measured:
 |---|---|---|
 | IPC, `rv32i.s` | 1.000 | 0.917 |
 | IPC, `rv32m.s` | 1.000 | 0.216 |
-| cells (Nangate45) | 17946 | 18911 |
-| area | 24940 um2 | 26852 um2 |
-| logic depth | 498 | 58 |
-| critical path | 27.448 ns | 4.431 ns |
+| cells (Nangate45) | 17938 | 18924 |
+| area | 24902 um2 | 26956 um2 |
+| logic depth | 498 | 59 |
+| critical path | 27.686 ns | 4.636 ns |
 
 **Adding M is what made the clock-period argument measurable.** Before it the
 two critical paths were 4.432 ns and 4.140 ns — a 7% difference, and this flow
 is not accurate enough to support a 7% claim. A combinational divider is 21 ns
-by itself, so the single-cycle core now sits at 27.4 ns against the pipelined
-core's 4.4 ns: **6.2x**, corroborated independently by logic depth at 8.6x.
+by itself, so the single-cycle core now sits at 27.7 ns against the pipelined
+core's 4.6 ns: **6.0x**, corroborated independently by logic depth at 8.4x.
 That gap is far too large for the flow's known inaccuracy to explain, and the
 inaccuracy runs the wrong way to help — 69% of the pipelined path is a single
-unbuffered mux, so its true path is *shorter* than measured and 6.2x is a
-floor. The single-cycle path, by contrast, spreads 27.4 ns over 525 cells with
-no gate above 0.61 ns, which is what a real ripple through a divider looks
+unbuffered mux, so its true path is *shorter* than measured and 6.0x is a
+floor. The single-cycle path, by contrast, spreads 27.7 ns over 504 cells with
+no gate above 0.72 ns, which is what a real ripple through a divider looks
 like.
 
 The honest counterweight is `rv32m.s` itself, where the pipelined core is
@@ -231,8 +260,9 @@ pathological for real code, and exactly the case a one-bit-per-cycle divider
 handles worst. Radix-4 would halve it. Nothing here does that yet.
 
 Two things are still open. The FPGA target is simulated only; pin assignments
-and timing closure are unverified. And there is no golden model — correctness
-rests on hand-written self-checking programs, which is the thing that gets
-hardest to retrofit once iteration 3 starts reordering commits. Both are
-written up where they belong, in [synth/README.md](synth/README.md),
-[fpga/README.md](fpga/README.md) and [docs/roadmap.md](docs/roadmap.md).
+and timing closure are unverified. And the commit trace does not carry memory
+writes, so a store bug surfaces at the next load of that address rather than at
+the store — a delay in where the failure is reported rather than a hole, since
+every test program loads back what it stores, but a real gap. Both are written
+up where they belong, in [synth/README.md](synth/README.md),
+[fpga/README.md](fpga/README.md) and [docs/spike.md](docs/spike.md).

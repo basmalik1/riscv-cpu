@@ -50,6 +50,12 @@ import rv32i_types::*;
         run("slt equal",        alu_op_slt,  32'd7, 32'd7,  32'd0);
         run("sltu unsigned",    alu_op_sltu, 32'hffff_ffff, 32'd1, 32'd0);
         run("sltu true",        alu_op_sltu, 32'd1, 32'hffff_ffff, 32'd1);
+        // slt had an equal case and sltu did not, which let a mutation to
+        // `<=` through every layer of the suite. Equal operands are the only
+        // input that separates the two comparisons.
+        run("sltu equal",       alu_op_sltu, 32'd7, 32'd7,  32'd0);
+        run("sltu equal zero",  alu_op_sltu, 32'd0, 32'd0,  32'd0);
+        run("sltu equal max",   alu_op_sltu, 32'hffff_ffff, 32'hffff_ffff, 32'd0);
 
         report("alu");
     end
