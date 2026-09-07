@@ -14,3 +14,4 @@ lint/*.log
 sim/fpga/
 sim/unit/
 synth/build/
+synth/pdk/

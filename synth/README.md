@@ -28,6 +28,48 @@ sv2v --version
 
 Make sure `~/.local/bin` is on your `PATH`.
 
+## Real area and timing
+
+`make compare` needs only Yosys. Two further levels need more:
+
+```bash
+make pdk            # fetch Nangate45, one 6.4 MB liberty file
+make area-compare   # real area in um2      -- needs the liberty only
+make timing-compare # real critical path ns -- also needs OpenSTA
+```
+
+### The PDK
+
+Nangate45, an open academic 45nm standard cell library, pulled from
+The-OpenROAD-Project. It is not a fabrication PDK, but it carries genuine
+timing arcs (2278 of them), which is what these numbers need. Chosen over
+Sky130 for being a single 6.4 MB file rather than a multi-gigabyte install.
+`synth/pdk/` is gitignored.
+
+### OpenSTA
+
+Yosys has a built-in `sta`, and it does not help here: it only understands
+Yosys's own internal cell types, so given a liberty-mapped netlist it prints
+`Cell type 'NOR3_X1' not recognised` for every gate and reports no paths.
+Nanoseconds need a real timing analyser.
+
+OpenSTA is not packaged for Ubuntu 24.04, so it is a source build. Everything
+it needs except CUDD is in apt:
+
+```bash
+sudo apt install -y tcl-dev swig libeigen3-dev zlib1g-dev bison flex cmake
+git clone https://github.com/parallaxsw/OpenSTA.git ~/OpenSTA
+cd ~/OpenSTA && cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j"$(nproc)"
+sudo install -m755 build/sta /usr/local/bin/sta
+sta -version
+```
+
+The upstream README lists CUDD as required and it is not in apt, but the
+CMakeLists treats it as a findable option rather than a hard dependency, so
+the build above is worth trying first. If it does object, CUDD is a small
+source build of its own.
+
 ## Usage
 
 ```bash
@@ -61,15 +103,30 @@ Read the ratio between the cores, not the absolute figures.
 
 ## Results
 
+Generic mapping, no library:
+
 ```
 single_cycle   cells 5852     logic depth 44
 pipelined      cells 7081     logic depth 37
 ```
 
-The pipelined core costs **21% more cells** -- pipeline registers, the hazard
-unit and the forwarding muxes -- and buys **16% less logic depth**. Neither
-core infers a latch, and both pass `hierarchy -check`, which is the real
-synthesizability result: this RTL maps to gates, it does not merely lint.
+Mapped to Nangate45, which gives real area:
+
+```
+single_cycle   7193 cells   12302.5 um2
+pipelined      8865 cells   15656.0 um2
+```
+
+The pipelined core costs **27% more area** on a real cell library, close to the
+21% the generic cell count suggested. Cell counts differ between the two rows
+because the generic run maps to abstract gates and the Nangate run maps to
+actual library cells with different granularity; read each row internally, not
+across.
+
+The extra area is pipeline registers, the hazard unit and the forwarding muxes,
+bought for **16% less logic depth**. Neither core infers a latch, and both pass
+`hierarchy -check`, which is the real synthesizability result: this RTL maps to
+gates, it does not merely lint.
 
 Two things about that depth figure are worth more than the number itself.
 

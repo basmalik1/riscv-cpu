@@ -1,40 +1,46 @@
 SHELL := /bin/bash -o pipefail
 .SHELLFLAGS += -e
 
-# Yosys synthesis, for cell counts and logic depth.
+# Synthesis and timing.
 #
-# Two things this does NOT give you, stated up front so the numbers are not
-# over-read:
+# Three levels, each needing one more tool than the last:
 #
-#   * Nanoseconds. Real timing needs a standard cell library with timing arcs
-#     and a static timing analyser. Yosys ships a toy cells.lib for its own
-#     tests, not a PDK. What you get here is logic DEPTH, which is a proxy for
-#     critical path and is comparable between the two cores because both are
-#     mapped the same way.
-#   * Anything about the FPGA. Quartus maps to MAX 10 primitives; this maps to
-#     generic gates. The two are not comparable in absolute terms.
+#   make compare   cell count and logic depth       yosys + sv2v
+#   make area      real area in um2                 + a liberty file (make pdk)
+#   make timing    real critical path in ns         + OpenSTA
 #
-# What it is good for: comparing the cores against each other, and catching RTL
-# that lints clean but will not map to gates.
+# Yosys has a built-in `sta`, but it only understands its own internal cell
+# types -- given a liberty-mapped netlist it reports "cell type not recognised"
+# for every gate and finds no paths. Real numbers need OpenSTA. See README.
 
 CORE ?= single_cycle
 
-# sv2v flattens SystemVerilog into Verilog-2005. Yosys 0.33's built-in frontend
-# has no package support at all, so it cannot read this design directly --
-# it rejects both `module m import p::*;` and a body-level import.
+# sv2v flattens SystemVerilog to Verilog-2005. Yosys's built-in frontend
+# rejects any user-defined type declared at file scope, package or not.
 PKG_SRCS := $(PWD)/../pkg/types.sv $(wildcard $(PWD)/../pkg/$(CORE)_types.sv)
 HDL_SRCS := $(shell find $(PWD)/../hdl/common $(PWD)/../hdl/$(CORE) -name '*.sv')
 
-BUILD := build/$(CORE)
-FLAT  := $(BUILD)/design.v
+BUILD  := build/$(CORE)
+FLAT   := $(BUILD)/design.v
+MAPPED := $(BUILD)/mapped.v
+
+# Nangate45, an open academic standard cell library. Not a real fabrication
+# PDK, but it carries genuine timing arcs, which is what matters here. Chosen
+# over Sky130 for being one 6.4 MB file rather than a multi-gigabyte install.
+LIBERTY := pdk/NangateOpenCellLibrary_typical.lib
+LIB_URL := https://raw.githubusercontent.com/The-OpenROAD-Project/OpenROAD-flow-scripts/master/flow/platforms/nangate45/lib/NangateOpenCellLibrary_typical.lib
+
+# Target period for the timing report, in ns. STA reports slack against this,
+# so it only sets the reference point -- the achieved path delay is what counts.
+PERIOD ?= 10.0
 
 .PHONY: all
-all: synth
+all: compare
 
+# ---------------------------------------------------------------- sources
 $(FLAT): $(PKG_SRCS) $(HDL_SRCS)
 	@command -v sv2v >/dev/null || { \
-	    echo "sv2v not found. See synth/README.md for the one-line install."; \
-	    exit 1; }
+	    echo "sv2v not found. See synth/README.md."; exit 1; }
 	mkdir -p $(BUILD)
 	sv2v $(PKG_SRCS) $(HDL_SRCS) > $(FLAT)
 
@@ -42,12 +48,20 @@ $(FLAT): $(PKG_SRCS) $(HDL_SRCS)
 flatten: $(FLAT)
 	@echo "flattened to $(FLAT)"
 
+.PHONY: pdk
+pdk: $(LIBERTY)
+
+$(LIBERTY):
+	mkdir -p pdk
+	curl -L --max-time 300 -o $(LIBERTY) $(LIB_URL)
+	@echo "fetched $$(du -h $(LIBERTY) | cut -f1) to $(LIBERTY)"
+
+# ------------------------------------------------- generic: cells and depth
+# -flatten matters: without it `ltp` reports a longest path per module, and the
+# deepest single module is not the critical path. -noff measures combinational
+# depth between registers, which is the quantity that sets the clock period.
 .PHONY: synth
 synth: $(FLAT)
-	# -flatten matters: without it `ltp` reports a longest path per module,
-	# and the deepest single module is not the critical path of the design.
-	# -noff measures combinational depth between registers, which is the
-	# quantity that sets the clock period.
 	yosys -p " \
 	    read_verilog $(FLAT); \
 	    hierarchy -check -top cpu; \
@@ -60,9 +74,6 @@ synth: $(FLAT)
 	@grep -E '^\s+Number of (cells|wires):' $(BUILD)/synth.log | tail -2
 	@grep -E 'Longest topological path in cpu' $(BUILD)/synth.log | tail -1
 
-# Both cores, side by side. The comparison is the point: absolute numbers from
-# a generic mapping mean little, the ratio between two designs mapped
-# identically means something.
 .PHONY: compare
 compare:
 	@for c in single_cycle pipelined; do \
@@ -73,6 +84,68 @@ compare:
 	    printf '%-14s cells %-8s logic depth %s\n' "$$c" "$$cells" "$$ltp"; \
 	done
 
+# ------------------------------------------- mapped to real standard cells
+$(MAPPED): $(FLAT) $(LIBERTY)
+	yosys -p " \
+	    read_verilog $(FLAT); \
+	    hierarchy -check -top cpu; \
+	    synth -top cpu -flatten; \
+	    dfflibmap -liberty $(LIBERTY); \
+	    abc -liberty $(LIBERTY) -D $(shell echo '$(PERIOD) * 1000' | bc); \
+	    opt_clean; \
+	    stat -liberty $(LIBERTY); \
+	    write_verilog -noattr $(MAPPED); \
+	" 2>&1 | tee $(BUILD)/map.log
+
+.PHONY: area
+area: $(MAPPED)
+	@echo
+	@echo "--- $(CORE) mapped to Nangate45 ---"
+	@grep -E 'Chip area|Number of cells' $(BUILD)/map.log | tail -2
+
+.PHONY: area-compare
+area-compare:
+	@for c in single_cycle pipelined; do \
+	    $(MAKE) --no-print-directory CORE=$$c area > /dev/null 2>&1 || \
+	        { echo "$$c: FAILED (see synth/build/$$c/map.log)"; continue; }; \
+	    cells=$$(grep -E '^\s+Number of cells:' build/$$c/map.log | tail -1 | awk '{print $$4}'); \
+	    ar=$$(grep -E 'Chip area' build/$$c/map.log | tail -1 | awk '{print $$NF}'); \
+	    printf '%-14s cells %-8s area %s um2\n' "$$c" "$$cells" "$$ar"; \
+	done
+
+# ------------------------------------------------------ real timing, in ns
+.PHONY: timing
+timing: $(MAPPED)
+	@command -v sta >/dev/null || { \
+	    echo "OpenSTA not found. See synth/README.md for the build."; exit 1; }
+	@mkdir -p $(BUILD)
+	@printf 'read_liberty %s\n' "$(LIBERTY)"                    > $(BUILD)/sta.tcl
+	@printf 'read_verilog %s\n' "$(MAPPED)"                    >> $(BUILD)/sta.tcl
+	@printf 'link_design cpu\n'                                >> $(BUILD)/sta.tcl
+	@printf 'create_clock -name clk -period %s [get_ports clk]\n' "$(PERIOD)" >> $(BUILD)/sta.tcl
+	@printf 'set_input_delay 0 -clock clk [all_inputs -no_clocks]\n'  >> $(BUILD)/sta.tcl
+	@printf 'set_output_delay 0 -clock clk [all_outputs]\n'    >> $(BUILD)/sta.tcl
+	@printf 'report_checks -path_delay max -digits 3\n'        >> $(BUILD)/sta.tcl
+	@printf 'report_wns\nreport_tns\n'                         >> $(BUILD)/sta.tcl
+	@printf 'exit\n'                                           >> $(BUILD)/sta.tcl
+	sta -no_splash -exit $(BUILD)/sta.tcl 2>&1 | tee $(BUILD)/sta.log
+
+.PHONY: timing-compare
+timing-compare:
+	@for c in single_cycle pipelined; do \
+	    $(MAKE) --no-print-directory CORE=$$c timing > /dev/null 2>&1 || \
+	        { echo "$$c: FAILED (see synth/build/$$c/sta.log)"; continue; }; \
+	    slack=$$(grep -E '^ *-?[0-9.]+ +slack' build/$$c/sta.log | tail -1 | awk '{print $$1}'); \
+	    arr=$$(grep -E 'data arrival time' build/$$c/sta.log | tail -1 | awk '{print $$1}'); \
+	    printf '%-14s critical path %s ns   slack %s ns vs %s ns target\n' \
+	        "$$c" "$$arr" "$$slack" "$(PERIOD)"; \
+	done
+
 .PHONY: clean
 clean:
 	rm -rf $(PWD)/build
+
+# The liberty file is a 6.4 MB third-party download; `make clean` leaves it.
+.PHONY: distclean
+distclean: clean
+	rm -rf $(PWD)/pdk
