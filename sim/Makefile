@@ -21,9 +21,14 @@ JOBS := $(shell nproc)
 MEM_FILL ?=
 MEM_FILL_ARG := $(if $(MEM_FILL),+MEM_FILL=$(MEM_FILL),)
 
+# Verilator's default --trace-max-array of 32 is deliberate here: it keeps the
+# 32-entry register file in the waveform while leaving the 16384-word memory
+# out. Raising it drags every memory word in as its own signal, which is ~16k
+# signals and makes GTKWave's signal browser unusable. Read memory contents from
+# sim/bin/memory_32.lst and the .dis instead.
 VER_FLAGS = -Wall --timescale 1ps/1ps -Mdir build -O3 -CFLAGS "-O2" \
             --x-assign fast --x-initial fast --cc --exe \
-            --trace-fst --trace-structs --trace-max-array 1048576 \
+            --trace-fst --trace-structs \
             +incdir+$(PWD)/../hvl/common \
             -GMEM_BASE=$(MEM_BASE) -GMEM_SIZE=$(MEM_SIZE) \
             $(PWD)/verilator_warn.vlt
