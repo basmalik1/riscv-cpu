@@ -50,20 +50,36 @@ Measured in simulation, same programs, same board clock:
 
 | Test | single-cycle | pipelined | speedup |
 |---|---|---|---|
-| `rv32i.s` | 1748 board cycles, 34.96 µs | 466, 9.32 µs | **3.75x** |
+| `rv32i.s` | 1884 board cycles, 37.68 µs | 513, 10.26 µs | **3.67x** |
 | `ctest.c` | 852 board cycles, 17.04 µs | 275, 5.50 µs | **3.10x** |
 | `smoke.s` | 92 board cycles, 1.84 µs | 30, 0.60 µs | **3.07x** |
+| `rv32m.s` | 1588 board cycles, 31.76 µs | 1829, 36.58 µs | **0.87x** |
 
-Note where this comes from. The pipelined core has *worse* IPC — 0.937 against
+Note where this comes from. The pipelined core has *worse* IPC — 0.917 against
 1.000 — and takes more of its own cycles. It wins because it runs four times
 faster, and it runs four times faster because it does not need the phase
 counter. Cycles per program is the wrong axis; wall-clock time is the right
 one.
 
+**`rv32m.s` is the case it loses**, and the number is honest rather than an
+artifact. 11% of that program is divides, each costing the pipelined core 33
+stall cycles, while a fixed 12.5 MHz board clock never charges the single-cycle
+core for the 27 ns critical path its combinational divider creates. Both halves
+of that are real: a one-bit-per-cycle divider is genuinely slow, and this board
+configuration genuinely undercharges the single-cycle core.
+
 **The caveat that matters:** this assumes the pipelined core actually closes
 timing at 50 MHz. That is unverified, and only the fitter can answer it. If it
 closes at 30 MHz instead, the ratio shrinks accordingly. The single-cycle
-figure is on firmer ground, since 12.5 MHz is slack-rich by construction.
+figure is on firmer ground, since 12.5 MHz is slack-rich by construction —
+though with the combinational divider its critical path is now 27.4 ns against
+an 80 ns period, so the slack is a good deal thinner than it was.
+
+**These numbers were wrong once.** Both board tops built into a single
+`sim/fpga/build/` directory, so `make CORE=pipelined run_fpga_sim` found a
+binary newer than its sources, skipped the rebuild, and ran the single-cycle
+core while reporting entirely plausible figures — identical ones, which is what
+gave it away. The build directories are per-core now.
 
 ## Tools
 

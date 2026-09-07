@@ -46,6 +46,10 @@ package pipelined_types;
         logic        is_branch;
         logic        is_jal;
         logic        is_jalr;
+        // Reaches EX/MEM as an ordinary wb_alu result, so no later stage needs
+        // to know about it. It stops here because EX is where it changes
+        // anything: which unit produces the result, and how long that takes.
+        logic        is_muldiv;
         logic        is_halt;
     } id_ex_t;
 

@@ -99,6 +99,14 @@ import pipelined_types::*;
                  imm[4:1], imm[11], 7'b1100011};
     endfunction
 
+    function automatic logic [31:0] i_mul(int rd, int rs1, int rs2);
+        i_mul = {7'b0000001, rs2[4:0], rs1[4:0], 3'b000, rd[4:0], 7'b0110011};
+    endfunction
+
+    function automatic logic [31:0] i_divu(int rd, int rs1, int rs2);
+        i_divu = {7'b0000001, rs2[4:0], rs1[4:0], 3'b101, rd[4:0], 7'b0110011};
+    endfunction
+
     function automatic logic [31:0] i_nop();
         i_nop = i_addi(0, 0, 0);
     endfunction
@@ -130,8 +138,11 @@ import pipelined_types::*;
         reg_of = dut.regfile_inst.data[n];
     endfunction
 
-    // Retirements in a hazard-free window, measured rather than assumed.
+    // Retirements in a hazard-free window, measured rather than assumed. The
+    // second is for the M tests, where one instruction alone outlasts the
+    // 20-cycle window the rest of the file uses.
     int base_retired;
+    int base_long;
 
     initial begin
         // ---- a straight run retires one instruction per cycle -----------
@@ -237,6 +248,113 @@ import pipelined_types::*;
         run(20);
         expect_eq("x0 not written",   reg_of(0), 32'd0);
         expect_eq("x0 not forwarded", reg_of(1), 32'd0);
+
+        // ---- RV32M costs exactly what it should --------------------------
+        // A longer reference window, measured the same way as the first.
+        clear_mem();
+        mem[0] = i_addi(1, 0, 1);
+        mem[1] = i_addi(2, 0, 2);
+        mem[2] = i_addi(3, 0, 3);
+        mem[3] = i_addi(4, 0, 4);
+        mem[4] = i_addi(5, 0, 5);
+        reset_dut();
+        run(60);
+        base_long = retired;
+        $display("  (long baseline: %0d retired in 60 cycles)", base_long);
+
+        // A multiply is combinational, so it must be free. If it ever stalls,
+        // nothing in the register file will show it -- only the count.
+        clear_mem();
+        mem[0] = i_addi(1, 0, 100);
+        mem[1] = i_addi(2, 0, 7);
+        mem[2] = i_mul (3, 1, 2);
+        reset_dut();
+        run(60);
+        expect_eq("multiply: value",           reg_of(3), 32'd700);
+        expect_eq("multiply costs nothing",    retired,   base_long);
+
+        // A divide holds EX for 34 cycles, so 33 fewer instructions retire in
+        // the same window. Asserting the exact number is the point: a divider
+        // that answers a cycle early is silently wrong, and one that answers a
+        // cycle late is invisible to every test that only reads registers.
+        //
+        // Both operands here arrive by forwarding -- x2 from MEM, x1 from WB.
+        // That is deliberate, and it is the case that breaks if the mdu reads
+        // its operands live: the bubbles this stall pushes into EX/MEM move the
+        // forwarding selects underneath a value that has to hold still for 34
+        // cycles, and b collapsing to zero turns the answer into the
+        // divide-by-zero result instead of 14.
+        clear_mem();
+        mem[0] = i_addi(1, 0, 100);
+        mem[1] = i_addi(2, 0, 7);
+        mem[2] = i_divu(3, 1, 2);
+        reset_dut();
+        run(60);
+        expect_eq("divide: forwarded operands", reg_of(3), 32'd14);
+        expect_eq("divide costs exactly 33",    retired,   base_long - 33);
+
+        // The same divide with its operands read from the register file
+        // instead, which separates a broken capture from a broken engine.
+        clear_mem();
+        mem[0] = i_addi(1, 0, 100);
+        mem[1] = i_addi(2, 0, 7);
+        mem[2] = i_nop();
+        mem[3] = i_nop();
+        mem[4] = i_divu(3, 1, 2);
+        reset_dut();
+        run(60);
+        expect_eq("divide: register operands", reg_of(3), 32'd14);
+
+        // Instructions behind a divide are held, not squashed. A stall that
+        // reused the branch machinery would lose these two entirely.
+        clear_mem();
+        mem[0] = i_addi(1, 0, 100);
+        mem[1] = i_addi(2, 0, 7);
+        mem[2] = i_divu(3, 1, 2);
+        mem[3] = i_addi(9, 0, 42);
+        mem[4] = i_addi(10, 0, 43);
+        reset_dut();
+        run(60);
+        expect_eq("divide: shadow 1 survives", reg_of(9),  32'd42);
+        expect_eq("divide: shadow 2 survives", reg_of(10), 32'd43);
+        expect_eq("divide: result still right", reg_of(3), 32'd14);
+
+        // The instruction right behind a divide takes its result by forwarding
+        // on the cycle the stall releases.
+        clear_mem();
+        mem[0] = i_addi(1, 0, 100);
+        mem[1] = i_addi(2, 0, 7);
+        mem[2] = i_divu(3, 1, 2);
+        mem[3] = i_addi(4, 3, 1);
+        reset_dut();
+        run(60);
+        expect_eq("divide result forwarded on release", reg_of(4), 32'd15);
+
+        // Back to back. The divider must return to idle in between; one that
+        // held its done flag would give the second divide the first's answer.
+        clear_mem();
+        mem[0] = i_addi(1, 0, 100);
+        mem[1] = i_addi(2, 0, 10);
+        mem[2] = i_addi(5, 0, 81);
+        mem[3] = i_addi(6, 0, 9);
+        mem[4] = i_divu(3, 1, 2);
+        mem[5] = i_divu(4, 5, 6);
+        reset_dut();
+        run(120);
+        expect_eq("back-to-back divide 1", reg_of(3), 32'd10);
+        expect_eq("back-to-back divide 2", reg_of(4), 32'd9);
+
+        // A load feeding a divide, which is the only place the two stall
+        // shapes meet: stall_id bubbles ID/EX while stall_ex holds it.
+        clear_mem();
+        mem[0] = i_addi(1, 0, 40);      // address 40 -> word 10
+        mem[1] = i_addi(2, 0, 7);
+        mem[2] = i_sw  (1, 1, 0);       // mem[10] = 40
+        mem[3] = i_lw  (4, 1, 0);
+        mem[4] = i_divu(3, 4, 2);       // load-use, then a 34-cycle divide
+        reset_dut();
+        run(60);
+        expect_eq("load into divide", reg_of(3), 32'd5);
 
         report("pipeline");
     end

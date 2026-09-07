@@ -1,11 +1,14 @@
 # RISC-V CPU
 
-An RV32I processor built with an entirely open-source flow: Verilator for lint
+An RV32IM processor built with an entirely open-source flow: Verilator for lint
 and simulation, GTKWave for waves, Yosys and sv2v for synthesis, OpenSTA
 against the Nangate45 cell library for timing, and Make and Python for glue.
 
 Two cores share the same ports and the same tests — a single-cycle one and a
-five-stage pipelined one — so they can be compared directly. There is also a
+five-stage pipelined one — so they can be compared directly. Both implement the
+base integer set and the M extension; the multiply/divide unit is one module
+parameterised by whether its divider is combinational or iterative, which is
+where the two designs differ most sharply. There is also a
 DE10-Lite FPGA target, simulated but not yet run on hardware. See
 [docs/roadmap.md](docs/roadmap.md) for where it goes next.
 
@@ -78,8 +81,9 @@ library** — no newlib `libc.a`, no `libgloss.a`, only `libgcc.a`. Programs are
 therefore built freestanding (`-nostdlib -lgcc`), which is what
 `bin/generate_memory_file.py` does. In practice that means:
 
-- `libgcc` helpers are available, so C code can multiply and divide on RV32I
-  even though the hardware has no M extension.
+- `libgcc` helpers are available, though with `arch` set to `rv32im` in
+  `options.json` the compiler emits hardware `mul`/`div` instead of calling
+  them. Set it back to `rv32i` to exercise the software path.
 - There is no `printf`, `malloc`, `memcpy`, or `memset`. GCC can emit implicit
   calls to `memcpy`/`memset` for large struct or array initialisers; if you hit
   an undefined reference, supply your own.
@@ -99,7 +103,8 @@ cd lint && make
 Build and run a test:
 
 ```bash
-cd sim && make run_verilator_top_tb PROG=../testcode/rv32i.s   # full ISA
+cd sim && make run_verilator_top_tb PROG=../testcode/rv32i.s   # base integer set
+cd sim && make run_verilator_top_tb PROG=../testcode/rv32m.s   # multiply/divide
 cd sim && make run_verilator_top_tb PROG=../testcode/smoke.s   # quick check
 cd sim && make run_verilator_top_tb PROG=../testcode/ctest.c   # C toolchain
 ```
@@ -119,12 +124,15 @@ use *more* cycles on these programs, not fewer — see
 own `_start` and are linked without `bin/startup.s`; C tests get it, so
 `ctest.c` is what keeps the startup code and linker script honest.
 
-`rv32i.s` is the real regression: 58 checks covering every instruction in the
+`rv32i.s` is the real regression: 66 checks covering every instruction in the
 base integer set, including each byte and halfword offset for loads and stores
-and both directions of every branch. A failure spins in place with the failing
-check number left in `t0`, so the waveform tells you which one broke without
-bisecting. The final guard compares a running count against the assembler's own
-tally, so a check that never executed fails too.
+and both directions of every branch. `rv32m.s` adds 60 more for the M
+extension — every multiply and divide, the values the spec fixes by decree
+(divide by zero, signed overflow, which way truncation goes), and the pipeline
+interactions a 34-cycle instruction creates. A failure spins in place with the
+failing check number left in `t0`, so the waveform tells you which one broke
+without bisecting. The final guard compares a running count against the
+assembler's own tally, so a check that never executed fails too.
 
 Memory not covered by the program image — `.bss`, the stack, any gap — is left
 at zero by default, which means a read of never-initialised memory looks
@@ -139,9 +147,9 @@ its low byte, which is the `JAL` opcode, so a runaway fetch into a poisoned gap
 jumps rather than faulting. Zero is the safer default for exactly that reason —
 all-zero is a defined illegal instruction.
 
-Run the unit tests — 200 checks across the ALU, register file, decoder, hazard
-unit, all five pipeline stages, and a cycle-level harness for the assembled
-pipeline:
+Run the unit tests — 614 checks across eleven testbenches: the ALU, register
+file, decoder, hazard unit, multiply/divide unit, all five pipeline stages, and
+a cycle-level harness for the assembled pipeline:
 
 ```bash
 cd sim && make unit
@@ -181,32 +189,50 @@ those numbers live.
 
 ## Status
 
-Both cores execute the full RV32I base integer set and pass the same tests,
-retiring identical instruction counts. Verified at three levels: a 66-check
-ISA regression, 200 unit checks including a cycle-level pipeline harness, and
-mutation testing of all of it — deliberate bugs are injected to confirm the
-suites can actually fail.
+Both cores execute the full RV32I base integer set and the M extension, pass
+the same tests, and retire identical instruction counts. Verified at three
+levels: a 126-check ISA regression across two programs, 614 unit checks
+including a cycle-level pipeline harness, and mutation testing of all of it —
+deliberate bugs are injected to confirm the suites can actually fail.
 
-The three layers catch different things. A stall that fires one cycle too long
-produces entirely correct results, so no program-level test can see it; only
-the cycle-level harness does.
+The three layers catch different things, and the M work produced a clean
+example. Failing to bubble EX/MEM while a divide is running retires 33 phantom
+instructions per divide, each writing a partial quotient to a register nothing
+reads yet. Every program still gets the right answer; only the cycle-level
+harness sees it.
 
-Measured, on the same programs:
+Measured:
 
 | | single-cycle | pipelined |
 |---|---|---|
-| IPC | 1.000 | 0.937 |
-| cells (Nangate45) | 7193 | 8865 |
-| area | 12302 um2 | 15656 um2 |
-| logic depth | 44 | 37 |
+| IPC, `rv32i.s` | 1.000 | 0.917 |
+| IPC, `rv32m.s` | 1.000 | 0.216 |
+| cells (Nangate45) | 17946 | 18911 |
+| area | 24940 um2 | 26852 um2 |
+| logic depth | 498 | 58 |
+| critical path | 27.448 ns | 4.431 ns |
 
-The pipelined core is slower in cycles and larger in area, which is the
-expected result: a scalar pipeline cannot beat IPC 1.0, and the win is clock
-period rather than cycle count.
+**Adding M is what made the clock-period argument measurable.** Before it the
+two critical paths were 4.432 ns and 4.140 ns — a 7% difference, and this flow
+is not accurate enough to support a 7% claim. A combinational divider is 21 ns
+by itself, so the single-cycle core now sits at 27.4 ns against the pipelined
+core's 4.4 ns: **6.2x**, corroborated independently by logic depth at 8.6x.
+That gap is far too large for the flow's known inaccuracy to explain, and the
+inaccuracy runs the wrong way to help — 69% of the pipelined path is a single
+unbuffered mux, so its true path is *shorter* than measured and 6.2x is a
+floor. The single-cycle path, by contrast, spreads 27.4 ns over 525 cells with
+no gate above 0.61 ns, which is what a real ripple through a divider looks
+like.
 
-Two things are honestly still open. The clock-period claim rests on logic depth
-rather than nanoseconds — the timing flow runs, but without a buffering and
-resizing pass its numbers are dominated by unbuffered high-fanout nets, so they
-are not a fair comparison. And the FPGA target is simulated only; pin
-assignments and timing closure are unverified. Both are written up where they
-belong, in [synth/README.md](synth/README.md) and [fpga/README.md](fpga/README.md).
+The honest counterweight is `rv32m.s` itself, where the pipelined core is
+**slower in wall-clock time on the board**: 36.6 us against 31.8 us. A
+restoring divider costs 33 cycles, and that program is 11% divides — which is
+pathological for real code, and exactly the case a one-bit-per-cycle divider
+handles worst. Radix-4 would halve it. Nothing here does that yet.
+
+Two things are still open. The FPGA target is simulated only; pin assignments
+and timing closure are unverified. And there is no golden model — correctness
+rests on hand-written self-checking programs, which is the thing that gets
+hardest to retrofit once iteration 3 starts reordering commits. Both are
+written up where they belong, in [synth/README.md](synth/README.md),
+[fpga/README.md](fpga/README.md) and [docs/roadmap.md](docs/roadmap.md).

@@ -8,7 +8,8 @@
 // state belongs with that stage. So the program counter and the held
 // instruction are in stage_if -- fetch is inherently stateful, and a stage_if
 // without them would be a bare mux -- while the register file is here, since it
-// spans ID and WB and belongs to neither. Every other stage is combinational.
+// spans ID and WB and belongs to neither. By the same rule the divider's
+// 32-cycle state machine sits in stage_ex. ID, MEM and WB are combinational.
 //
 // The cost of that split, worth knowing before chasing a branch bug: the
 // redirect path crosses three files. stage_ex decides a branch is taken,
@@ -51,8 +52,14 @@ import pipelined_types::*;
     ex_mem_t ex_mem_n, ex_mem;
     mem_wb_t mem_wb_n, mem_wb;
 
-    logic        stall, redirect;
+    // Two stalls of different shapes -- see hazard.sv, which decides both.
+    // stall_id bubbles ID/EX and lets EX run; stall_ex holds ID/EX and bubbles
+    // EX/MEM. Everything in front of ID/EX freezes for either.
+    logic        stall_id, stall_ex, stall_front, redirect;
     logic [31:0] redirect_pc;
+    logic        md_req, md_ready;
+
+    assign stall_front = stall_id || stall_ex;
 
     // ==================================================================
     // IF
@@ -64,7 +71,7 @@ import pipelined_types::*;
     ) u_if (
         .clk         (clk),
         .rst         (rst),
-        .stall       (stall),
+        .stall       (stall_front),
         .redirect    (redirect),
         .redirect_pc (redirect_pc),
         .imem_addr   (imem_addr),
@@ -79,7 +86,7 @@ import pipelined_types::*;
     always_ff @(posedge clk) begin
         if (rst || redirect) begin
             if_id <= '0;
-        end else if (!stall) begin
+        end else if (!stall_front) begin
             if_id <= if_id_n;
         end
     end
@@ -123,13 +130,26 @@ import pipelined_types::*;
     );
 
     // ------------------------------ ID/EX -----------------------------
-    // A stall inserts a bubble rather than holding, so the instruction stuck in
-    // ID is re-decoded next cycle from the held instruction above.
+    // The two stalls act on this register in opposite directions, which is the
+    // whole reason they are separate signals.
+    //
+    // stall_ex means the instruction ALREADY HERE is unfinished, so the
+    // register holds and nothing else applies -- squashing or bubbling it would
+    // throw away a divide that is 20 cycles in. It is therefore tested first.
+    //
+    // stall_id means the instruction in ID cannot proceed, so a bubble goes in
+    // rather than a hold: ID re-decodes next cycle from the instruction stage_if
+    // is replaying, which costs nothing and keeps this register's write
+    // unconditional.
     always_ff @(posedge clk) begin
-        if (rst || redirect || stall) begin
+        if (rst) begin
             id_ex <= '0;
-        end else begin
-            id_ex <= id_ex_n;
+        end else if (!stall_ex) begin
+            if (redirect || stall_id) begin
+                id_ex <= '0;
+            end else begin
+                id_ex <= id_ex_n;
+            end
         end
     end
 
@@ -140,6 +160,8 @@ import pipelined_types::*;
     logic [31:0] mem_fwd_value;
 
     stage_ex u_ex (
+        .clk           (clk),
+        .rst           (rst),
         .id_ex         (id_ex),
         .fwd_a         (fwd_a),
         .fwd_b         (fwd_b),
@@ -147,13 +169,18 @@ import pipelined_types::*;
         .wb_fwd_value  (wb_value),
         .ex_mem        (ex_mem_n),
         .redirect      (redirect),
-        .redirect_pc   (redirect_pc)
+        .redirect_pc   (redirect_pc),
+        .md_req        (md_req),
+        .md_ready      (md_ready)
     );
 
     // ----------------------------- EX/MEM -----------------------------
-    // Nothing past EX ever stalls; bubbles simply flow through.
+    // Nothing past EX ever stalls; bubbles simply flow through. An unfinished
+    // multi-cycle instruction is where those bubbles come from -- EX still has
+    // real work in progress, but it has no result to hand on yet, so what goes
+    // downstream has to be nothing rather than a partial answer.
     always_ff @(posedge clk) begin
-        if (rst) begin
+        if (rst || stall_ex) begin
             ex_mem <= '0;
         end else begin
             ex_mem <= ex_mem_n;
@@ -206,9 +233,12 @@ import pipelined_types::*;
         .id_ex     (id_ex),
         .ex_mem    (ex_mem),
         .mem_wb    (mem_wb),
+        .md_req    (md_req),
+        .md_ready  (md_ready),
         .fwd_a     (fwd_a),
         .fwd_b     (fwd_b),
-        .stall     (stall)
+        .stall_id  (stall_id),
+        .stall_ex  (stall_ex)
     );
 
 endmodule

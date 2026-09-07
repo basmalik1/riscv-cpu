@@ -32,6 +32,7 @@ import pipelined_types::*;
     imm_sel_t   imm_sel;
     wb_sel_t    wb_sel;
     logic       regf_we, mem_read, mem_write, is_branch, is_jal, is_jalr;
+    logic       is_muldiv;
 
     control control_unit (
         .inst      (inst),
@@ -45,7 +46,8 @@ import pipelined_types::*;
         .mem_write (mem_write),
         .is_branch (is_branch),
         .is_jal    (is_jal),
-        .is_jalr   (is_jalr)
+        .is_jalr   (is_jalr),
+        .is_muldiv (is_muldiv)
     );
 
     // The bit scrambling is the ISA's, not ours: the formats put the sign bit
@@ -84,6 +86,7 @@ import pipelined_types::*;
         id_ex.is_branch = is_branch;
         id_ex.is_jal    = is_jal;
         id_ex.is_jalr   = is_jalr;
+        id_ex.is_muldiv = is_muldiv;
         id_ex.is_halt   = (inst == HALT_INST);
     end
 

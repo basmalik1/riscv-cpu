@@ -18,9 +18,30 @@ import pipelined_types::*;
     input  ex_mem_t     ex_mem,
     input  mem_wb_t     mem_wb,
 
+    // From EX: an M instruction is executing, and whether its result exists
+    // yet. A multiply always says yes; a divide says no for 33 cycles.
+    input  logic        md_req,
+    input  logic        md_ready,
+
     output fwd_sel_t    fwd_a,
     output fwd_sel_t    fwd_b,
-    output logic        stall
+
+    // Two stalls, and they are not the same shape. Getting them confused is the
+    // easiest way to break this file, so the distinction is in the names:
+    //
+    //   stall_id  the instruction in ID cannot go yet. Freeze IF and IF/ID,
+    //             put a BUBBLE into ID/EX. EX keeps running -- it is the load
+    //             in EX that the stall is waiting on.
+    //
+    //   stall_ex  the instruction in EX is not finished. Freeze IF, IF/ID and
+    //             ID/EX -- the instruction has to stay where it is -- and put
+    //             a bubble into EX/MEM instead.
+    //
+    // They cannot overlap, and not by luck: stall_id needs a load in EX and
+    // stall_ex needs an M instruction in EX, and both read the same id_ex. One
+    // instruction is not both. cpu.sv relies on that when it orders the two.
+    output logic        stall_id,
+    output logic        stall_ex
 );
 
     // Whether the instruction genuinely reads each source register. Without
@@ -85,6 +106,21 @@ import pipelined_types::*;
                       && ((reads_rs1(id_opcode) && (id_ex.rd_s == id_rs1_s))
                        || (reads_rs2(id_opcode) && (id_ex.rd_s == id_rs2_s)));
 
-    assign stall = id_valid && load_use;
+    assign stall_id = id_valid && load_use;
+
+    // No id_valid term here. stall_id asks whether the ID stage holds
+    // something real; stall_ex asks whether EX has finished, and md_req already
+    // carries id_ex.valid, so ID has no bearing on the answer.
+    //
+    // Adding the term would not actually break anything, and that is worth
+    // knowing rather than assuming: if_id.valid only falls on reset or a
+    // redirect, a redirect can only come from a branch or jump in EX, and EX
+    // holds a divide -- so ID is never empty while this signal matters.
+    // Mutation testing agrees; gating it on id_valid passes every test except
+    // the one below, which drives the combination directly.
+    //
+    // It is left out because the condition is not about ID, not because the
+    // extra term would be observable.
+    assign stall_ex = md_req && !md_ready;
 
 endmodule

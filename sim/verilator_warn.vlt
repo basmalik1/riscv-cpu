@@ -22,6 +22,13 @@ lint_off -rule UNUSEDSIGNAL -file "*/hdl/pipelined/stage_mem.sv"
 lint_off -rule UNUSEDSIGNAL -file "*/hdl/pipelined/stage_wb.sv"
 lint_off -rule UNUSEDSIGNAL -file "*/hdl/pipelined/stage_id.sv"
 
+// mdu.sv is one module with two implementations behind SEQUENTIAL. The
+// combinational build has no state, so clk, rst and req are unread in that
+// elaboration -- unavoidable for any parameterised module whose parameter
+// removes logic, and the alternative is two modules that can drift apart on
+// the ISA corner cases they share.
+lint_off -rule UNUSEDSIGNAL -file "*/hdl/common/mdu.sv"
+
 // Unit testbenches generate their own clock with a blocking assignment in an
 // always block, which is idiomatic for a testbench and meaningless as a
 // synthesis warning.

@@ -1,14 +1,25 @@
-// EX: operand selection with forwarding applied, the ALU, branch resolution,
-// and the redirect that squashes wrongly-fetched instructions.
+// EX: operand selection with forwarding applied, the ALU and the mdu, branch
+// resolution, and the redirect that squashes wrongly-fetched instructions.
 //
-// Combinational. This stage applies forwarding but does not decide it -- the
-// selects come from hazard.sv, so there is exactly one place to read if the
-// forwarding is ever suspect.
+// This stage applies forwarding but does not decide it -- the selects come from
+// hazard.sv, so there is exactly one place to read if the forwarding is ever
+// suspect. It does not decide stalling either, for the same reason: it reports
+// md_req and md_ready and hazard.sv turns those into a stall.
+//
+// No longer purely combinational, and it is the only stage that is not. The
+// divider inside the mdu is a 32-cycle machine, and by the rule cpu.sv sets out
+// -- a register BETWEEN stages belongs there, a stage's OWN state belongs with
+// the stage -- that machine is EX's, not the pipeline's. What that costs is
+// worth knowing before debugging a divide: the instruction sits here for 34
+// cycles while cpu.sv holds ID/EX and feeds bubbles into EX/MEM behind it.
 
 module stage_ex
 import rv32i_types::*;
 import pipelined_types::*;
 (
+    input  logic        clk,
+    input  logic        rst,
+
     input  id_ex_t      id_ex,
 
     // Forwarding: what to substitute, and the values to substitute from.
@@ -19,7 +30,12 @@ import pipelined_types::*;
 
     output ex_mem_t     ex_mem,
     output logic        redirect,
-    output logic [31:0] redirect_pc
+    output logic [31:0] redirect_pc,
+
+    // For hazard.sv: an M instruction is executing, and whether its result is
+    // available this cycle. A multiply always answers yes.
+    output logic        md_req,
+    output logic        md_ready
 );
 
     logic [31:0] rs1_fwd, rs2_fwd;
@@ -59,6 +75,32 @@ import pipelined_types::*;
         .f    (alu_f)
     );
 
+    // RV32M, alongside the ALU rather than inside it: the multiply is a
+    // different shape of logic and the divide has a different latency, and
+    // folding either into alu.sv would put both into every instruction's path.
+    //
+    // The forwarded operands are handed over live. That is safe for the
+    // multiply, which resolves in the same cycle, and NOT safe for the divide,
+    // which is why the mdu captures them itself on its starting cycle -- the
+    // bubbles this stall pushes into EX/MEM move the forwarding selects out
+    // from under a value that has to stay still for 34 cycles.
+    logic [31:0] md_result;
+
+    assign md_req = id_ex.valid && id_ex.is_muldiv;
+
+    mdu #(
+        .SEQUENTIAL (1'b1)
+    ) mdu_inst (
+        .clk    (clk),
+        .rst    (rst),
+        .req    (md_req),
+        .funct3 (id_ex.funct3),
+        .a      (rs1_fwd),
+        .b      (rs2_fwd),
+        .result (md_result),
+        .ready  (md_ready)
+    );
+
     // Compared directly rather than through the ALU, which is busy computing
     // the branch target in the same cycle.
     logic branch_taken;
@@ -84,7 +126,12 @@ import pipelined_types::*;
 
     always_comb begin
         ex_mem.valid      = id_ex.valid;
-        ex_mem.alu_f      = alu_f;
+        // The mdu result takes the ALU's slot rather than travelling on a path
+        // of its own, so MEM, WB and the forwarding network all stay unaware
+        // that M exists. Safe because the two never compete: an M instruction
+        // is not a load, a store, or a branch, so nothing downstream wants
+        // alu_f to be an address or a target.
+        ex_mem.alu_f      = id_ex.is_muldiv ? md_result : alu_f;
         ex_mem.pc4        = id_ex.pc + 32'd4;
         ex_mem.imm        = id_ex.imm;
         ex_mem.store_data = rs2_fwd;

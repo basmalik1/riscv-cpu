@@ -9,10 +9,7 @@ One instruction per cycle, zero-latency memory, no hazards to speak of.
 **Done when:** every instruction in the RV32I base set executes correctly and
 the tests in `testcode/` reach the halt instruction instead of their fail loop.
 
-Remaining work is all inside `hdl/cpu.sv` and `hdl/control.sv` — every `TODO`
-in those two files is a piece of the datapath.
-
-## 2. Pipelined — *current*
+## 2. Pipelined — *done, tagged v2.0*
 
 Classic five stages (IF / ID / EX / MEM / WB) with forwarding and stalls.
 Lives in `hdl/pipelined/`; `make CORE=pipelined` selects it, and the
@@ -22,9 +19,9 @@ single-cycle core stays in the tree so the two can be compared directly.
 same number of instructions, and the pipelined core runs meaningfully faster
 in wall-clock time on the same board.
 
-The first two hold. The third is measured at roughly 3.1x to 3.75x in
-simulation (see the FPGA section below), but rests on the pipelined core
-closing timing at 50 MHz, which is still unverified.
+The first two hold. The third is measured at 3.07x to 3.67x in simulation on
+integer code (see the FPGA section below), and rests on the pipelined core
+closing timing at 50 MHz, which only the fitter can confirm.
 
 ### A correction to the criterion this originally had
 
@@ -38,7 +35,8 @@ Measured, once both cores were passing:
 
 | Test | single-cycle | pipelined | retired |
 |---|---|---|---|
-| `rv32i.s` | 436 cycles, IPC 1.000 | 465 cycles, IPC 0.937 | 436 both |
+| `rv32i.s` | 470 cycles, IPC 1.000 | 512 cycles, IPC 0.917 | 470 both |
+| `rv32m.s` | 396 cycles, IPC 1.000 | 1828 cycles, IPC 0.216 | 396 both |
 | `ctest.c` | 212 cycles, IPC 1.000 | 274 cycles, IPC 0.773 | 212 both |
 | `smoke.s` | 22 cycles, IPC 1.000 | 29 cycles, IPC 0.758 | 22 both |
 
@@ -86,13 +84,30 @@ Same programs, same board clock, in simulation:
 
 | Test | single-cycle | pipelined | speedup |
 |---|---|---|---|
-| `rv32i.s` | 1748 board cycles, 34.96 us | 466, 9.32 us | **3.75x** |
+| `rv32i.s` | 1884 board cycles, 37.68 us | 513, 10.26 us | **3.67x** |
 | `ctest.c` | 852 board cycles, 17.04 us | 275, 5.50 us | **3.10x** |
 | `smoke.s` | 92 board cycles, 1.84 us | 30, 0.60 us | **3.07x** |
+| `rv32m.s` | 1588 board cycles, 31.76 us | 1829, 36.58 us | **0.87x** |
 
 This is the iteration 2 win, and note where it comes from: the pipelined
 core has *worse* IPC and uses more of its own cycles. It wins purely on
 clock rate. Wall-clock time is the axis that matters, not cycle count.
+
+`rv32m.s` is the exception and it is not an artifact. That program is 11%
+divides, each costing the pipelined core 33 stall cycles, while a fixed 12.5
+MHz board clock never charges the single-cycle core for the 27 ns critical path
+its combinational divider creates. Both halves of that are honest: a
+one-bit-per-cycle divider really is slow, and the board really does undercharge
+the single-cycle core. See `synth/README.md`.
+
+**These numbers were wrong once, and the reason is worth recording.** `sim/`
+built both board tops into one `fpga/build/` directory, so `make CORE=pipelined
+run_fpga_sim` found a binary newer than its sources, skipped the rebuild, and
+ran the single-cycle core while reporting entirely plausible figures. The same
+bug had already been found and fixed on the simulation path (`VDIR :=
+verilator/$(CORE)`) without anyone noticing the FPGA path did it too. Both are
+now per-core. A build system that can silently answer for the wrong design is a
+correctness problem, not a convenience one.
 
 It assumes the pipelined core closes timing at 50 MHz, which only the fitter
 can confirm. The single-cycle figure is on firmer ground, 12.5 MHz being
@@ -102,6 +117,42 @@ slack-rich by construction.
 proprietary. Yosys/nextpnr do not target MAX 10, so there is no open-source
 route to this board — the "entirely open-source flow" claim in the README holds
 for simulation and stops holding at the bitstream.
+
+## 2.5 RV32M — *done, both cores*
+
+Multiply and divide, in `hdl/common/mdu.sv`: one module, one set of ISA
+semantics, and a `SEQUENTIAL` parameter that picks the divider implementation.
+The single-cycle core takes the combinational one, the pipelined core the
+iterative one.
+
+It landed here rather than in iteration 4 for two reasons.
+
+**It is the first thing that makes the two designs genuinely different.** Until
+M, both cores computed everything in one pass of combinational logic and
+differed only in how many registers that logic was cut into. A divide cannot be
+done that way at any sensible clock, so the pipelined core stalls and the
+single-cycle core pays 21 ns. That turned the clock-period comparison from a 7%
+difference this flow cannot measure into a 6.2x one it can.
+
+**A divide is a variable-latency functional unit with a ready handshake**,
+which is the structure iteration 3 is built out of. Learning it inside a
+five-stage pipeline with one existing stall source is a great deal easier than
+learning it and out-of-order commit at the same time.
+
+What it cost the pipeline: a second stall of a different shape. `stall_id`
+bubbles ID/EX and lets EX run, which is what a load-use needs; `stall_ex` holds
+ID/EX and bubbles EX/MEM, which is what an unfinished instruction needs. They
+cannot overlap — one instruction is not both a load and a multiply — and
+`cpu.sv` orders the two pipeline-register writes on the strength of that.
+
+The one subtlety worth knowing before touching it: an instruction that occupies
+EX for 34 cycles cannot read its operands live. The bubbles the stall pushes
+into EX/MEM move the forwarding selects underneath it, so the mdu captures a
+and b on the cycle the divide starts. A divider that forgets this still passes
+every test whose operands come from the register file.
+
+**Still open:** the divider is restoring, one bit per cycle, 34 cycles. Radix-4
+would halve that, and `rv32m.s` shows exactly what it would buy.
 
 ## 3. Out-of-order
 
@@ -116,8 +167,9 @@ instruction for instruction.
 
 ## 4. Advanced features
 
-Caches, branch prediction, superscalar issue, a multiply/divide unit — picked
-based on what the IPC numbers say is actually the bottleneck.
+Caches, branch prediction, superscalar issue, a faster divider — picked based
+on what the IPC numbers say is actually the bottleneck. Multiply and divide
+came early instead; see 2.5.
 
 ## Memory model per iteration
 
@@ -146,23 +198,27 @@ Two consequences worth remembering:
 ## Infrastructure deferred until it is needed
 
 - **Spike lockstep.** RVFI-style commit ports on `cpu.sv` plus a Python
-  comparator against `spike --log-commits`. Self-checking assembly is enough
-  through iteration 1; this becomes necessary around iteration 2 and
-  indispensable at iteration 3. The memory base is already `0x8000_0000` —
-  Spike's default — so nothing needs remapping when it lands.
-- **Nanosecond timing.** `synth/` gives cell counts and logic depth through
-  Yosys. Measured: single-cycle 5852 cells at depth 44, pipelined 7081 cells at
-  depth 37 -- 21% more area for 16% less depth, with no latches inferred in
-  either. Two caveats keep that from being the clock-period answer. The
-  pipelined critical path runs MEM/WB through the writeback mux and the
-  forwarding network into the ALU, so forwarding gives back much of what
-  pipelining buys. And memory is outside the synthesized module, so the
-  single-cycle figure omits the memory access that forces its board top down to
-  12.5 MHz. Getting to real nanoseconds needs a standard cell library with
-  timing arcs plus a static timing analyser — an open PDK such as Sky130 or Nangate45, and OpenSTA.
-  Until then the iteration 2 speedup rests on the clock ratio (50 MHz against
-  12.5 MHz) and on the pipelined core closing timing at 50 MHz, which only the
-  fitter can confirm.
+  comparator against `spike --log-commits`. Self-checking assembly was enough
+  through iteration 1 and is starting to strain: RV32M added four values the
+  spec fixes by decree, and hand-written tests only cover the corner cases
+  somebody thought of. This becomes genuinely hard to retrofit at iteration 3,
+  once commits reorder, so it is the next thing worth doing rather than the
+  next thing after that. The memory base is already `0x8000_0000` — Spike's
+  default — so nothing needs remapping when it lands.
+- **Nanosecond timing.** *Done.* `synth/` now maps to Nangate45 and runs
+  OpenSTA: single-cycle 27.448 ns against pipelined 4.431 ns, a 6.2x gap, with
+  logic depth corroborating at 498 against 58. Neither core infers a latch and
+  both pass `hierarchy -check`, which is the real synthesizability result —
+  this RTL maps to gates rather than merely linting.
+
+  Two caveats survive, and one has been resolved. The pipelined figure is still
+  inflated by the missing buffering pass (69% of its path is one unbuffered
+  mux), so 6.2x is a floor rather than an estimate; closing that needs
+  OpenROAD's `repair_design`, which means installing OpenROAD proper. And
+  memory remains outside the synthesized module, so the single-cycle number
+  omits the access that forces its board top to 12.5 MHz — it understates the
+  gap further. What is no longer a caveat is the size of the difference: at 7%
+  the measurement error swamped the claim, and at 6.2x it does not.
 
   Note also that Yosys cannot read this design directly. Its built-in frontend
   rejects any user-defined type declared at file scope, package or not, though

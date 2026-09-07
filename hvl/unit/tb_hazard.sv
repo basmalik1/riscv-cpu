@@ -17,7 +17,8 @@ import pipelined_types::*;
     ex_mem_t     ex_mem;
     mem_wb_t     mem_wb;
     fwd_sel_t    fwd_a, fwd_b;
-    logic        stall;
+    logic        md_req, md_ready;
+    logic        stall_id, stall_ex;
 
     hazard dut (.*);
 
@@ -29,6 +30,9 @@ import pipelined_types::*;
         id_ex     = '0;
         ex_mem    = '0;
         mem_wb    = '0;
+        // Neutral: nothing in EX is waiting on anything.
+        md_req    = 1'b0;
+        md_ready  = 1'b1;
     endtask
 
     // An instruction sitting in MEM that will write rd.
@@ -55,7 +59,7 @@ import pipelined_types::*;
         #1;
         expect_eq("idle fwd_a", {30'd0, fwd_a}, {30'd0, fwd_none});
         expect_eq("idle fwd_b", {30'd0, fwd_b}, {30'd0, fwd_none});
-        expect_bit("idle no stall", stall, 1'b0);
+        expect_bit("idle no stall", stall_id, 1'b0);
 
         // ---- forward from MEM --------------------------------------------
         clear();
@@ -129,7 +133,7 @@ import pipelined_types::*;
         id_opcode      = op_b_reg;
         id_rs1_s       = 5'd3;
         #1;
-        expect_bit("load-use on rs1 stalls", stall, 1'b1);
+        expect_bit("load-use on rs1 stalls", stall_id, 1'b1);
 
         clear();
         id_ex.valid    = 1'b1;
@@ -138,7 +142,7 @@ import pipelined_types::*;
         id_opcode      = op_b_reg;
         id_rs2_s       = 5'd3;
         #1;
-        expect_bit("load-use on rs2 stalls", stall, 1'b1);
+        expect_bit("load-use on rs2 stalls", stall_id, 1'b1);
 
         // ---- and the cases that must NOT stall ----------------------------
         clear();
@@ -148,7 +152,7 @@ import pipelined_types::*;
         id_rs1_s       = 5'd8;
         id_rs2_s       = 5'd9;
         #1;
-        expect_bit("unrelated load no stall", stall, 1'b0);
+        expect_bit("unrelated load no stall", stall_id, 1'b0);
 
         // lui, auipc and jal put immediate bits where rs1/rs2 would be, so a
         // coincidental match there must not stall.
@@ -159,7 +163,7 @@ import pipelined_types::*;
         id_opcode      = op_b_lui;
         id_rs1_s       = 5'd3;
         #1;
-        expect_bit("lui does not read rs1", stall, 1'b0);
+        expect_bit("lui does not read rs1", stall_id, 1'b0);
 
         clear();
         id_ex.valid    = 1'b1;
@@ -168,7 +172,7 @@ import pipelined_types::*;
         id_opcode      = op_b_jal;
         id_rs1_s       = 5'd3;
         #1;
-        expect_bit("jal does not read rs1", stall, 1'b0);
+        expect_bit("jal does not read rs1", stall_id, 1'b0);
 
         // An I-type reads rs1 but not rs2.
         clear();
@@ -178,7 +182,7 @@ import pipelined_types::*;
         id_opcode      = op_b_imm;
         id_rs2_s       = 5'd3;
         #1;
-        expect_bit("addi does not read rs2", stall, 1'b0);
+        expect_bit("addi does not read rs2", stall_id, 1'b0);
 
         // A load targeting x0 discards its result, so nothing depends on it.
         clear();
@@ -187,7 +191,7 @@ import pipelined_types::*;
         id_ex.rd_s     = 5'd0;
         id_rs1_s       = 5'd0;
         #1;
-        expect_bit("load to x0 no stall", stall, 1'b0);
+        expect_bit("load to x0 no stall", stall_id, 1'b0);
 
         // Nothing in ID means nothing to stall.
         clear();
@@ -197,7 +201,66 @@ import pipelined_types::*;
         id_ex.rd_s     = 5'd3;
         id_rs1_s       = 5'd3;
         #1;
-        expect_bit("empty ID no stall", stall, 1'b0);
+        expect_bit("empty ID no stall", stall_id, 1'b0);
+
+        // ---- the second stall, which is a different shape -----------------
+        // stall_ex asks whether the instruction in EX has finished. It has no
+        // id_valid term: a divide already started must run to completion even
+        // if a redirect has emptied everything in front of it.
+        clear();
+        md_req   = 1'b1;
+        md_ready = 1'b0;
+        #1;
+        expect_bit("unfinished mdu stalls EX", stall_ex, 1'b1);
+        expect_bit("and does not stall ID",    stall_id, 1'b0);
+
+        clear();
+        md_req   = 1'b1;
+        md_ready = 1'b1;
+        #1;
+        expect_bit("finished mdu releases EX", stall_ex, 1'b0);
+
+        // A multiply reports ready in the cycle it arrives, so it must never
+        // produce a stall. This is the check that fails if md_ready is ever
+        // wired to something that only tracks the divider.
+        clear();
+        md_req   = 1'b1;
+        md_ready = 1'b1;
+        id_valid = 1'b1;
+        #1;
+        expect_bit("multiply costs no stall", stall_ex, 1'b0);
+
+        // No M instruction in EX means no reason to hold it, whatever ID is
+        // doing.
+        clear();
+        md_req   = 1'b0;
+        md_ready = 1'b0;
+        #1;
+        expect_bit("no mdu request, no EX stall", stall_ex, 1'b0);
+
+        // An empty ID must not release a divide. Gating stall_ex on id_valid
+        // would let a redirect drop a half-finished divide out of EX.
+        clear();
+        id_valid = 1'b0;
+        md_req   = 1'b1;
+        md_ready = 1'b0;
+        #1;
+        expect_bit("empty ID does not release the mdu", stall_ex, 1'b1);
+
+        // The two stalls read the same id_ex and cannot both fire: stall_id
+        // needs a load in EX, stall_ex needs an M instruction there, and one
+        // instruction is not both. Asserted here because cpu.sv orders the two
+        // registers on the strength of it.
+        clear();
+        id_ex.valid    = 1'b1;
+        id_ex.mem_read = 1'b1;
+        id_ex.rd_s     = 5'd3;
+        id_rs1_s       = 5'd3;
+        md_req         = 1'b0;      // a load is not an M instruction
+        md_ready       = 1'b1;
+        #1;
+        expect_bit("load-use stalls ID only", stall_id, 1'b1);
+        expect_bit("and leaves EX running",   stall_ex, 1'b0);
 
         report("hazard");
     end

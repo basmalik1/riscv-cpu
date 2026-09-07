@@ -63,6 +63,7 @@ import rv32i_types::*;
     imm_sel_t   imm_sel;
     wb_sel_t    wb_sel;
     logic       regf_we, mem_read, mem_write, is_branch, is_jal, is_jalr;
+    logic       is_muldiv;
 
     control control_unit (.*);
 
@@ -121,6 +122,42 @@ import rv32i_types::*;
         .b    (alu_b),
         .f    (alu_f)
     );
+
+    // RV32M. SEQUENTIAL is 0 here and that is the whole point: a core whose
+    // defining property is that every instruction retires in one cycle cannot
+    // have an instruction that takes 34. The combinational divide costs about
+    // 21 ns of critical path, five times what the rest of this core needs --
+    // which is precisely the sort of thing the single-cycle design exists to
+    // make visible rather than hide. mdu.sv carries the measurements.
+    //
+    // ready is tied high by construction in this configuration, so there is
+    // nothing here to wait on and no handshake to get wrong.
+    logic [31:0] md_result;
+    /* verilator lint_off UNUSEDSIGNAL */
+    // Constant 1 in this configuration, and connected only because a port has
+    // to be. The pipelined core is where it means something.
+    logic        md_ready;
+    /* verilator lint_on UNUSEDSIGNAL */
+
+    mdu #(
+        .SEQUENTIAL (1'b0)
+    ) mdu_inst (
+        .clk    (clk),
+        .rst    (rst),
+        .req    (is_muldiv),
+        .funct3 (funct3),
+        .a      (rs1_v),
+        .b      (rs2_v),
+        .result (md_result),
+        .ready  (md_ready)
+    );
+
+    // What execute produced, whichever unit produced it. Only writeback reads
+    // this: the memory address and the branch target are always the ALU's, and
+    // an M instruction is neither a load, a store, nor a branch.
+    logic [31:0] ex_result;
+
+    assign ex_result = is_muldiv ? md_result : alu_f;
 
     // Branches compare the raw register values rather than reusing the ALU,
     // because the ALU is busy computing the branch target this cycle.
@@ -197,7 +234,7 @@ import rv32i_types::*;
     // ------------------------------------------------------------------
     always_comb begin
         unique case (wb_sel)
-            wb_alu: rd_v = alu_f;
+            wb_alu: rd_v = ex_result;
             wb_mem: rd_v = load_data;
             wb_pc4: rd_v = pc + 32'd4;
             wb_imm: rd_v = imm;

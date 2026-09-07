@@ -30,20 +30,32 @@ import rv32i_types::*;
     output logic        mem_write,
     output logic        is_branch,
     output logic        is_jal,
-    output logic        is_jalr
+    output logic        is_jalr,
+
+    // An M instruction. Its result comes from the mdu rather than the ALU, and
+    // in the pipelined core a divide also decides how long execute takes, so
+    // this has to leave the decoder rather than stay a local.
+    output logic        is_muldiv
 );
 
     rv32i_opcode opcode;
     logic [2:0]  funct3;
+    logic [6:0]  funct7;
     logic        alt_op_bit;
 
     assign opcode = rv32i_opcode'(inst[6:0]);
     assign funct3 = inst[14:12];
+    assign funct7 = inst[31:25];
 
-    // funct7[5]. Declared as the single bit rather than the whole field because
-    // it is the only bit of funct7 that RV32I gives meaning to -- carrying a
-    // 7-bit signal with six dead bits just invites confusion.
+    // funct7[5], kept as its own name because it is the bit the base ISA reads
+    // -- sub for add, sra for srl. The rest of funct7 was dead until M, which
+    // is why the whole field is now extracted alongside it.
     assign alt_op_bit = inst[30];
+
+    // M shares op_b_reg with the base register-register arithmetic and is told
+    // apart only by funct7. Checking the whole field matters: were this to test
+    // a single bit, every reserved funct7 encoding would decode as a multiply.
+    assign is_muldiv = (opcode == op_b_reg) && (funct7_t'(funct7) == muldiv);
 
     // Shared by op_b_imm and op_b_reg. `alt_op` is inst[30] (funct7[5]), which
     // selects sub for add and sra for the shift-right pair. Callers are
@@ -164,11 +176,21 @@ import rv32i_types::*;
             end
 
             // rd = rs1 op rs2, with inst[30] selecting sub and sra.
+            //
+            // M lands here too. It keeps wb_sel = wb_alu because the mdu result
+            // is substituted for the ALU's in execute rather than carried on a
+            // separate writeback path -- the two never both want the slot, and
+            // giving M its own wb_sel value would widen the enum for nothing.
+            // aluop is forced to add so the unused ALU is at least computing
+            // something defined; funct3 means an M operation here, not an ALU
+            // one, and decoding it as the latter reads as a bug to anyone
+            // tracing the signal.
             op_b_reg: begin
                 imm_sel   = imm_none;
                 alu_a_sel = alu_a_rs1;
                 alu_b_sel = alu_b_rs2;
-                aluop     = decode_alu_op(funct3, alt_op_bit);
+                aluop     = is_muldiv ? alu_op_add
+                                      : decode_alu_op(funct3, alt_op_bit);
                 wb_sel    = wb_alu;
                 regf_we   = 1'b1;
             end

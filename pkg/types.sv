@@ -55,8 +55,23 @@ package rv32i_types;
 
     typedef enum logic [6:0] {
         base    = 7'b0000000,
-        variant = 7'b0100000
+        variant = 7'b0100000,
+        muldiv  = 7'b0000001   // the M extension, sharing op_b_reg
     } funct7_t;
+
+    // M extension. funct3[2] splits the two families: 0 is a multiply, whose
+    // result is always available in one cycle, 1 is a divide, which is not.
+    // Everything downstream keys off that bit rather than re-listing the ops.
+    typedef enum logic [2:0] {
+        md_f3_mul    = 3'b000,  // low 32 bits; signedness cannot change these
+        md_f3_mulh   = 3'b001,  // high 32, signed   x signed
+        md_f3_mulhsu = 3'b010,  // high 32, signed   x unsigned
+        md_f3_mulhu  = 3'b011,  // high 32, unsigned x unsigned
+        md_f3_div    = 3'b100,
+        md_f3_divu   = 3'b101,
+        md_f3_rem    = 3'b110,
+        md_f3_remu   = 3'b111
+    } md_f3_t;
 
     typedef enum logic [3:0] {
         alu_op_add  = 4'b0000,

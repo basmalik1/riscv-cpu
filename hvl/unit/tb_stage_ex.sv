@@ -1,6 +1,12 @@
-// stage_ex: operand selection with forwarding applied, branch resolution, and
-// the redirect. Forwarding is decided in hazard.sv and only applied here, so
-// these tests drive the selects directly rather than inferring them.
+// stage_ex: operand selection with forwarding applied, branch resolution, the
+// redirect, and the mdu result mux. Forwarding is decided in hazard.sv and only
+// applied here, so these tests drive the selects directly rather than inferring
+// them; the same goes for the stall, which this stage reports rather than
+// decides.
+//
+// A clock runs because the stage now contains the divider's state machine.
+// Every test below leaves is_muldiv low except the last group, so for the rest
+// of the file that machine sits in idle and the stage behaves combinationally.
 
 module tb_stage_ex
 import rv32i_types::*;
@@ -9,12 +15,17 @@ import pipelined_types::*;
 
     `include "tb_check.svh"
 
+    logic        clk = 1'b0;
+    logic        rst;
     id_ex_t      id_ex;
     fwd_sel_t    fwd_a, fwd_b;
     logic [31:0] mem_fwd_value, wb_fwd_value;
     ex_mem_t     ex_mem;
     logic        redirect;
     logic [31:0] redirect_pc;
+    logic        md_req, md_ready;
+
+    always #5 clk = ~clk;
 
     stage_ex dut (.*);
 
@@ -36,6 +47,12 @@ import pipelined_types::*;
     initial begin
         mem_fwd_value = 32'h1111_1111;
         wb_fwd_value  = 32'h2222_2222;
+
+        rst = 1'b1;
+        clear();
+        repeat (2) @(negedge clk);
+        rst = 1'b0;
+        @(negedge clk);
 
         // ---- operand sources ---------------------------------------------
         clear(); #1;
@@ -147,6 +164,62 @@ import pipelined_types::*;
         fwd_b           = fwd_wb;
         #1;
         expect_eq("store data forwarded", ex_mem.store_data, 32'h2222_2222);
+
+        // ---- RV32M ---------------------------------------------------------
+        // A multiply is combinational, so it fits the same drive-and-settle
+        // pattern as everything above.
+        clear();
+        id_ex.is_muldiv = 1'b1;
+        id_ex.funct3    = md_f3_mul;
+        id_ex.rs1_v     = 32'd6;
+        id_ex.rs2_v     = 32'd7;
+        #1;
+        expect_eq ("mul result replaces the ALU's", ex_mem.alu_f, 32'd42);
+        expect_bit("mul asserts md_req",            md_req,       1'b1);
+        expect_bit("mul is ready at once",          md_ready,     1'b1);
+
+        // The forwarding network feeds the mdu the same operands it feeds the
+        // ALU. A unit wired to id_ex directly would silently use stale values.
+        clear();
+        id_ex.is_muldiv = 1'b1;
+        id_ex.funct3    = md_f3_mul;
+        id_ex.rs1_v     = 32'd6;
+        id_ex.rs2_v     = 32'd7;
+        fwd_a           = fwd_wb;       // 0x2222_2222
+        #1;
+        expect_eq("mul takes forwarded operands",
+                  ex_mem.alu_f, 32'h2222_2222 * 32'd7);
+
+        // A divide cannot answer in the cycle it arrives, which is the whole
+        // reason hazard.sv has a second stall. Reporting that is this stage's
+        // job; tb_mdu covers how long the wait actually is.
+        clear();
+        id_ex.is_muldiv = 1'b1;
+        id_ex.funct3    = md_f3_divu;
+        id_ex.rs1_v     = 32'd42;
+        id_ex.rs2_v     = 32'd5;
+        #1;
+        expect_bit("divide asserts md_req",     md_req,   1'b1);
+        expect_bit("divide is not ready at once", md_ready, 1'b0);
+
+        // A bubble must not start one. Without the valid term a squashed
+        // divide would hold the pipeline for 33 cycles on nothing.
+        clear();
+        id_ex.valid     = 1'b0;
+        id_ex.is_muldiv = 1'b1;
+        id_ex.funct3    = md_f3_divu;
+        #1;
+        expect_bit("bubble does not request the mdu", md_req, 1'b0);
+
+        // And an ordinary instruction must leave the ALU's answer alone.
+        clear();
+        id_ex.is_muldiv = 1'b0;
+        id_ex.funct3    = md_f3_mul;    // same bits, not an M instruction
+        id_ex.rs1_v     = 32'd6;
+        id_ex.rs2_v     = 32'd7;
+        #1;
+        expect_eq ("add keeps the ALU result", ex_mem.alu_f, 32'd13);
+        expect_bit("add does not request the mdu", md_req,   1'b0);
 
         report("stage_ex");
     end

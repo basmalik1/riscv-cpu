@@ -82,9 +82,10 @@ cd synth && make compare              # both cores, side by side
 **The generic run is not nanoseconds.** `make compare` uses no library at all,
 so it reports gate counts and logic depth only. Yosys ships a toy `cells.lib`
 for its own regression tests, and it carries no timing arcs. Nanoseconds need
-`make pdk` for the cell library and OpenSTA on top — both set up below, and
-both carrying the caveat that the delays are not yet trustworthy without a
-buffering pass.
+`make pdk` for the cell library and OpenSTA on top — both set up below. Read
+the Results section before quoting any delay: the flow performs no buffering
+pass, so a path that is short in gates but wide in fanout reads far slower than
+it is.
 
 **They are not the FPGA either.** Quartus maps to MAX 10 primitives — LUTs,
 M9K blocks, carry chains. This maps to generic gates. The absolute numbers are
@@ -107,93 +108,125 @@ Read the ratio between the cores, not the absolute figures.
 Generic mapping, no library:
 
 ```
-single_cycle   cells 5852     logic depth 44
-pipelined      cells 7081     logic depth 37
+single_cycle   cells 21694    logic depth 498
+pipelined      cells 17941    logic depth 58
 ```
 
-Mapped to Nangate45, timing via OpenSTA:
+Mapped to Nangate45, area:
 
 ```
-single_cycle   critical path 4.432 ns   fmax 225.6 MHz
-pipelined      critical path 4.140 ns   fmax 241.5 MHz
+single_cycle   17946 cells   24939.9 um2
+pipelined      18911 cells   26851.6 um2
 ```
 
-**Do not read that as a clock-period comparison.** It is 7%, and the flow that
-produced it is missing a step. Yosys's `abc -liberty` maps logic to cells but
-performs no buffer insertion and no gate sizing, so a net with large fanout is
-charged its whole capacitance through one gate. The pipelined critical path
-shows exactly that:
+Timing via OpenSTA:
 
 ```
-0.290  DFF_X1/Q
-2.817  MUX2_X1      <- one mux, 2.8 ns
-0.988  NOR3_X1
-0.093  AOI211_X1
-4.140  total
+single_cycle   critical path 27.448 ns   fmax  36.4 MHz
+pipelined      critical path  4.431 ns   fmax 225.6 MHz
 ```
 
-A `MUX2_X1` in this library is around 0.05 ns loaded normally. 68% of the
-pipelined path sits in that single gate. The single-cycle path, by contrast,
-spreads 4.432 ns across 47 cells at about 0.09 ns each, which is plausible. The
-two paths are not measuring the same thing, so the ratio between them is not
-meaningful.
+### What the M extension did to these numbers
 
-Closing that gap needs a buffering and resizing pass after mapping --
-OpenROAD's `repair_design`, which means installing OpenROAD proper rather than
-OpenSTA alone. Until then **the logic depth figures below are the more
-trustworthy proxy**, precisely because they count gates and are therefore
-immune to the missing buffering.
+Before RV32M the two critical paths were 4.432 ns and 4.140 ns, a 7% gap this
+flow cannot support a claim about. Adding multiply and divide separated them by
+**6.2x**, and the reason is structural rather than incidental: a divide is the
+first operation whose latency the two designs are forced to handle differently.
+The pipelined core can stall, so it takes a one-bit-per-cycle divider that costs
+34 cycles and almost no delay. The single-cycle core cannot, so it takes a
+combinational divider and pays the whole thing in clock period.
 
-Area, which does not depend on buffering and is sound as measured:
+Each unit measured on its own, registered on both sides, through this same
+recipe:
+
+| Unit | Cells | Area | Critical path |
+|---|---|---|---|
+| `a * b`, 32x32 combinational | 6222 | 7378 um2 | 2.923 ns |
+| `a / b`, combinational | 4604 | 5759 um2 | **21.422 ns** |
+| restoring divider, 1 bit/cycle | 534 | 999 um2 | 1.709 ns |
+
+The multiply is combinational in both cores: at 2.923 ns it fits under the
+pipelined core's existing path, so it costs area and no cycles. The divide is
+where the designs part company, and 21.4 ns against 1.7 ns is why.
+
+### Is 6.2x trustworthy, when 7% was not?
+
+Yes, and the reason is worth stating rather than asserting. The known defect in
+this flow is that `abc -liberty` maps logic to cells but inserts no buffers and
+resizes no gates, so a high-fanout net is charged its whole capacitance through
+one gate. Look at where each path spends its time:
 
 ```
-single_cycle   7193 cells   12302.5 um2
-pipelined      8865 cells   15656.0 um2
+single_cycle   27.448 ns over 525 cells, largest single gate 0.605 ns (AOI22_X1)
+pipelined       4.431 ns over  17 cells, largest single gate 3.062 ns (MUX2_X1)
 ```
 
-The pipelined core costs **27% more area** on a real cell library, close to the
-21% the generic cell count suggested. Cell counts differ between the two rows
-because the generic run maps to abstract gates and the Nangate run maps to
-actual library cells with different granularity; read each row internally, not
-across.
+The single-cycle path is now a genuine measurement: half a thousand gates at
+roughly 0.05 ns each, which is what a ripple through a divider actually looks
+like. No gate dominates and there is nothing for buffering to fix.
 
-The extra area is pipeline registers, the hazard unit and the forwarding muxes,
-bought for **16% less logic depth**. Neither core infers a latch, and both pass
-`hierarchy -check`, which is the real synthesizability result: this RTL maps to
-gates, it does not merely lint.
+The pipelined path still shows the artifact -- 69% of it in one mux -- so its
+true delay is **shorter** than 4.431 ns. The error therefore runs in the
+direction that makes the pipelined core look worse, which makes 6.2x a floor
+rather than an estimate. That is the opposite of the situation at 7%, where the
+artifact was larger than the difference being claimed.
 
-Two things about that depth figure are worth more than the number itself.
+Logic depth corroborates it independently, and is immune to buffering because
+it counts gates: **498 against 58, or 8.6x**.
 
-**The critical paths are in different places.** Yosys reports where:
+### Where the critical paths are
+
+Yosys reports the endpoints:
 
 | Core | longest path |
 |---|---|
-| single-cycle | `imem_rdata` -> `regfile.rd_v` |
-| pipelined | `mem_wb` -> `u_ex.alu_f` |
+| single-cycle | `regfile_inst.data[9]` -> `regfile_inst.rd_v[31]` |
+| pipelined | `mem_wb[78]` -> `ex_mem_n[141]` |
 
-The single-cycle path is the whole datapath, instruction bus to register write,
-which is what "single cycle" means. The pipelined path is MEM/WB, through the
-writeback mux, through the forwarding network, into the ALU -- the forwarding
-path, not any one stage. That is the textbook critical path of a five-stage
-pipeline with forwarding, and it is why the depth only improves by 1.19x rather
-than approaching the 5x the stage count might suggest. Forwarding buys back
-correctness at the cost of the very path pipelining was meant to shorten.
+The single-cycle path leaves the register file, goes through the divider, and
+comes back to the register file's write port. That is the single-cycle contract
+stated as a gate count: read, compute anything the ISA has, and write, inside
+one edge.
 
-**Memory is not in this measurement.** Only `cpu` is synthesized, and both
-cores take memory as an external port. The single-cycle core's real critical
-path on hardware runs *through* a memory access -- that is precisely why
-`fpga/single_cycle/` needs a phase counter and runs at 12.5 MHz. So 44 against
-37 compares internal logic only, and understates the single-cycle disadvantage
-considerably.
+The pipelined path is unchanged by M: MEM/WB, through the writeback mux,
+through the forwarding network, into the ALU. Forwarding is still what bounds
+this core, which is why adding a 2.9 ns multiplier alongside the ALU moved it
+only from 4.140 to 4.431 ns -- the multiplier is not on the critical path, the
+result mux in front of EX/MEM is.
 
-That leaves two independent figures measuring different things:
+### Memory is still not in this measurement
 
-- **Logic depth, 1.19x** in favour of the pipelined core. Internal logic only.
-- **Board wall-clock, 3.1x to 3.75x** in favour of the pipelined core. That
-  gap is dominated by memory access structure, not by internal logic.
+Only `cpu` is synthesized, and both cores take memory as an external port. The
+single-cycle core's real path on hardware runs *through* a memory access, which
+is why `fpga/single_cycle/` needs a phase counter and runs at 12.5 MHz. So even
+27.4 ns understates it.
 
-Neither one on its own is the answer, and quoting the 3.75x without saying
-where it comes from would be misleading.
+### And the counterweight
+
+On the board, in simulation, wall-clock:
+
+| Test | single-cycle | pipelined | speedup |
+|---|---|---|---|
+| `rv32i.s` | 1884 cycles, 37.68 us | 513, 10.26 us | **3.67x** |
+| `ctest.c` | 852 cycles, 17.04 us | 275, 5.50 us | **3.10x** |
+| `smoke.s` | 92 cycles, 1.84 us | 30, 0.60 us | **3.07x** |
+| `rv32m.s` | 1588 cycles, 31.76 us | 1829, 36.58 us | **0.87x** |
+
+`rv32m.s` is the one the pipelined core loses, and the number is real rather
+than an artifact. 11% of that program is divides and each costs 33 stall
+cycles, which a fixed 12.5 MHz board clock does not charge the single-cycle
+core for. It is a pathological mix -- real code divides far less -- but it is
+the honest shape of a one-bit-per-cycle divider, and radix-4 would halve it.
+
+Two independent figures, then, measuring different things:
+
+- **Critical path, 6.2x** in favour of the pipelined core, floor not estimate.
+  Internal logic only.
+- **Board wall-clock, 3.07x to 3.67x** on integer code, and **0.87x** on
+  divide-heavy code. Dominated by memory access structure, not internal logic.
+
+Neither is the whole answer, and quoting either without saying where it comes
+from would be misleading.
 
 ## Why the flattened Verilog is kept
 
