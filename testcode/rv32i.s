@@ -336,6 +336,44 @@ auipc_here:
     add  a0, a1, a2             # both operands forwarded
     CHECK 94, a0, 23
 
+    # --------------------------------------- hazard interactions
+    # A load feeding a jump's base register. jalr reads rs1, so this has to
+    # stall exactly like any other load-use -- and getting it wrong jumps to
+    # a stale address rather than producing a wrong number, so it fails as a
+    # runaway rather than a mismatch.
+    la   a0, scratch
+    la   a1, hz_target
+    sw   a1, 0(a0)
+    li   a2, 0
+    lw   a3, 0(a0)
+    jalr ra, a3, 0              # load-use on a jump target
+hz_back:
+    CHECK 95, a2, 1
+
+    # Two taken branches back to back. The second is the first instruction
+    # fetched after a redirect, so this lands a redirect directly on another.
+    li   a4, 0
+    beq  x0, x0, 1f
+    j    fail
+1:  beq  x0, x0, 2f
+    j    fail
+2:  addi a4, a4, 1
+    CHECK 96, a4, 1
+
+    # A branch with both operands forwarded, from different stages: a7's
+    # producer is in MEM and a6's is in WB when the branch reaches EX.
+    li   a5, 7
+    addi a6, a5, 0
+    addi a7, a5, 0
+    beq  a6, a7, 3f
+    j    fail
+3:  li   a5, 9
+    addi a6, a5, 0
+    addi a7, a5, 1              # deliberately unequal
+    bne  a6, a7, 4f
+    j    fail
+4:  CHECK 97, a7, 10
+
     # -------------------------------------------------------- jal / jalr
     # jal must both land on the target and leave pc+4 in rd.
     li   a2, 0
@@ -370,6 +408,10 @@ jal_target:
     jalr zero, ra, 0            # return via jalr
 
 jalr_target:
+    addi a2, a2, 1
+    jalr zero, ra, 0
+
+hz_target:
     addi a2, a2, 1
     jalr zero, ra, 0
 
