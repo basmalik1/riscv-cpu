@@ -1,0 +1,45 @@
+# ABC script for the liberty-mapped flow, passed by `abc -script`.
+#
+# The first twelve lines are yosys's own default `abc -liberty` script,
+# reproduced verbatim so the mapping quality is unchanged. Everything after
+# `&put` is the addition.
+#
+# Yosys's default stops at the mapper. `&nf` picks a cell for every gate but
+# always the X1 drive, and it inserts no buffers, so a net with a thousand
+# loads is charged its whole capacitance through one minimum-strength gate.
+# On a small design nothing fans out far enough for that to matter. On a core
+# with wide broadcasts -- a result tag compared against every issue queue
+# entry, a squash reaching every reorder buffer slot -- four such gates can
+# carry 87% of the reported critical path, which is a statement about the
+# flow rather than about the design.
+#
+# `buffer` builds a fanout tree, `upsize`/`dnsize` pick drive strengths
+# against the same delay target the mapper used. This is the cheap two thirds
+# of what OpenROAD's `repair_design` does, and it needs no tool this flow does
+# not already have.
+#
+# `-p` is not optional here. Yosys maps the flip-flops itself with dfflibmap
+# and hands ABC the combinational logic alone, so every flop output arrives as
+# a PRIMARY INPUT -- and buffering those is off by default. Without it a
+# registered signal that fans out to a thousand gates keeps its whole load on
+# one DFF_X1, which on this design left 6.8 ns of a 7.9 ns path in a single
+# clock-to-Q. That is the same artifact the pass exists to remove, hiding one
+# level up.
+
+strash
+&get -n
+&fraig -x
+&put
+scorr
+dc2
+dretime
+strash
+&get -n
+&dch -f
+&nf -D {D}
+&put
+
+buffer -p -N 8
+topo
+upsize -D {D}
+dnsize -D {D}

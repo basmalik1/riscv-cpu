@@ -145,25 +145,30 @@ Not obviously worth it, and left undone deliberately rather than overlooked.
 
 ## The cores against each other
 
-`make crosscheck` compares the two cores' commit logs directly and needs no
-Spike at all. It is worth more than it looks: the two microarchitectures share
-only the decoder, the ALU and the mdu, so anything in the pipeline's own
-machinery — forwarding, stalls, squashes — has no way to produce a matching log
-by accident.
+`make crosscheck` compares two cores' commit logs directly and needs no Spike
+at all. `CROSS_A` and `CROSS_B` pick the pair. It is worth more than it looks:
+the three microarchitectures share only the decoder, the ALU and the mdu, so
+anything in a core's own machinery — forwarding, stalls, squashes, rename,
+wakeup — has no way to produce a matching log by accident.
 
 It is also the check to reach for first when something breaks, because it says
 whether a bug is in the shared logic or in one core's control.
 
 ## Results
 
-All four programs, both cores, every instruction:
+All four programs, all three cores, every instruction:
 
-| Program | Commits | single-cycle | pipelined |
-|---|---|---|---|
-| `smoke.s` | 23 | match | match |
-| `rv32i.s` | 471 | match | match |
-| `rv32m.s` | 397 | match | match |
-| `ctest.c` | 213 | match | match |
+| Program | Commits | single-cycle | pipelined | out-of-order |
+|---|---|---|---|---|
+| `smoke.s` | 23 | match | match | match |
+| `rv32i.s` | 471 | match | match | match |
+| `rv32m.s` | 397 | match | match | match |
+| `ctest.c` | 213 | match | match | match |
+
+Twelve runs. The out-of-order column is the one that took work: it retires in
+program order out of the reorder buffer, so a core that executes in a different
+order than it commits has to produce a log identical to one that never
+reordered anything.
 
 ## Does it actually catch anything?
 

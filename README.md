@@ -14,8 +14,8 @@ FPGA target for the first two, simulated but not yet run on hardware. See
 
 The layout separates synthesizable RTL from testbench code and keeps each tool
 in its own directory, so each new core drops in beside the last rather than
-replacing it. The pipelined one did; the out-of-order one is being built the
-same way.
+replacing it. Both the pipelined and the out-of-order core arrived that way,
+and all three still build and pass from the same commands.
 
 ```
 bin/       toolchain scripts, linker script, C startup code
@@ -58,7 +58,7 @@ only understands its internal cell types. Both are explained in
 **Nangate45** is an open academic cell library distributed with
 OpenROAD-flow-scripts, originally from Nangate Inc. via Si2's OpenCell
 initiative. It is a teaching and research library, not a fabrication PDK, and
-it is used here only as a consistent yardstick for comparing the two cores. It
+it is used here only as a consistent yardstick for comparing the cores. It
 is downloaded on demand into `synth/pdk/`, which is gitignored — no third-party
 library is vendored into this repository.
 
@@ -122,10 +122,12 @@ cd sim && make CORE=pipelined run_verilator_top_tb PROG=../testcode/rv32i.s
 cd sim && make CORE=ooo       run_verilator_top_tb PROG=../testcode/rv32m.s
 ```
 
-Both expose the same ports, so the testbench and the FPGA top take either. Each
-run reports cycles, instructions retired and IPC. Expect the pipelined core to
-use *more* cycles on these programs, not fewer — see
-[docs/roadmap.md](docs/roadmap.md) for why that is the right answer.
+All three expose the same ports, so one testbench takes any of them, and the
+FPGA top takes either of the first two. Each run reports cycles, instructions
+retired and IPC. Expect the pipelined and out-of-order cores to use *more*
+cycles on these programs, not fewer — see [docs/roadmap.md](docs/roadmap.md)
+for why that is the right answer, and for the one program where the
+out-of-order core uses fewer.
 
 `PROG` takes a `.s`, a `.c`, or a prebuilt `.elf`. Assembly tests define their
 own `_start` and are linked without `bin/startup.s`; C tests get it, so
@@ -156,8 +158,8 @@ all-zero is a defined illegal instruction.
 
 Run the unit tests — 22717 checks across twenty testbenches: the ALU,
 register file, decoder, hazard unit, multiply/divide unit, all five pipeline
-stages, a cycle-level harness for the assembled pipeline, and the out-of-order
-structures built so far:
+stages, a cycle-level harness for the assembled pipeline, and every structure
+the out-of-order core is built from:
 
 ```bash
 cd sim && make unit
@@ -180,7 +182,7 @@ It reports a mutation that failed to build, or that hung, as neither a pass nor
 a catch. Both say nothing about the test, and an earlier version of this scored
 them as though they did.
 
-Check every retired instruction against Spike, and the two cores against each
+Check every retired instruction against Spike, and two cores against each
 other:
 
 ```bash
@@ -207,6 +209,7 @@ cd synth && make compare        # cells and logic depth
 cd synth && make pdk            # fetch Nangate45, 6.4 MB, once
 cd synth && make area-compare   # area in um2
 cd synth && make timing-compare # critical path in ns
+cd synth && make bound-compare  # and how much of it is still flow artifact
 ```
 
 `options.json` holds the clock period, timeout, ISA string, and memory map.
@@ -227,8 +230,8 @@ those numbers live.
 
 ## Status
 
-Both cores execute the full RV32I base integer set and the M extension, pass
-the same tests, and produce byte-identical commit traces. Verified at four
+All three cores execute the full RV32I base integer set and the M extension,
+pass the same tests, and produce byte-identical commit traces. Verified at four
 levels: every retired instruction checked against Spike, a 126-check ISA
 regression across two programs, 22717 unit checks including a cycle-level
 pipeline harness, and mutation testing of all of it — deliberate bugs are
@@ -251,30 +254,31 @@ rather than an assumption:
 
 Measured:
 
-| | single-cycle | pipelined |
-|---|---|---|
-| IPC, `rv32i.s` | 1.000 | 0.917 |
-| IPC, `rv32m.s` | 1.000 | 0.216 |
-| cells (Nangate45) | 18078 | 18553 |
-| area | 25019 um2 | 26570 um2 |
-| logic depth | 498 | 58 |
-| critical path | 27.172 ns | 4.587 ns |
+| | single-cycle | pipelined | out-of-order |
+|---|---|---|---|
+| IPC, `rv32i.s` | 1.000 | 0.917 | 0.690 |
+| IPC, `rv32m.s` | 1.000 | 0.216 | 0.227 |
+| cells (Nangate45) | 19347 | 20349 | 61172 |
+| area | 27525 um2 | 28234 um2 | 92192 um2 |
+| logic depth | 498 | 58 | 79 |
+| critical path | 19.117 ns | 2.914 ns | 7.863 ns |
 
 **Adding M is what made the clock-period argument measurable.** Before it the
-two critical paths were 4.432 ns and 4.140 ns — a 7% difference, and this flow
-is not accurate enough to support a 7% claim. A combinational divider is 21 ns
-by itself, so the single-cycle core now sits at 27.2 ns against the pipelined
-core's 4.6 ns: **about 6x**, corroborated independently by logic depth at 8.6x.
-Not more precisely than that — repeated runs of the same flow on the same
-design put the ratio between 5.9x and 6.0x, because ABC's heuristics shift by a
-percent or two whenever the netlist changes. Quoting three decimals would imply
-a reproducibility this flow does not have.
+two scalar critical paths were 4.432 ns and 4.140 ns — a 7% difference, and
+this flow is not accurate enough to support a 7% claim. A combinational divider
+is 21 ns by itself, so the single-cycle core sits at 19.1 ns against the
+pipelined core's 2.9 ns: **about 6.6x**, corroborated independently by logic
+depth at 8.6x. Not more precisely than that — repeated runs of the same flow on
+the same design move the ratio by a percent or two, because ABC's heuristics
+shift whenever the netlist changes.
 
-The gap is far too large for the flow's known inaccuracy to explain, and the
-inaccuracy runs the wrong way to help — 71% of the pipelined path is a single
-unbuffered mux, so its true path is *shorter* than measured and 6x is a floor.
-The single-cycle path, by contrast, spreads 27.2 ns over 503 cells with no gate
-above 0.5 ns, which is what a real ripple through a divider looks like.
+Neither scalar figure is inflated by the flow's known weakness, and that is
+checked rather than assumed: `make -C synth bound-compare` cuts every path
+through a net the mapper failed to buffer and reports what is left, and for
+both of these cores the number does not move. The out-of-order core is the one
+that still has a hole — one 1504-fanout squash broadcast carries 6.8 ns of its
+7.9 — so its true critical path is somewhere in **[3.566, 7.863] ns** and this
+flow cannot narrow it further.
 
 The honest counterweight is `rv32m.s` itself, where the pipelined core is
 **slower in wall-clock time on the board**: 36.6 us against 31.8 us. A
@@ -282,10 +286,24 @@ restoring divider costs 33 cycles, and that program is 11% divides — which is
 pathological for real code, and exactly the case a one-bit-per-cycle divider
 handles worst. Radix-4 would halve it. Nothing here does that yet.
 
-Two things are still open. The FPGA target is simulated only; pin assignments
-and timing closure are unverified. And the commit trace reports the store an
-instruction *intended* — effective address, data and width — but not the byte
-lane shifting downstream of it, so that last class of store bug still reports
-at the load that observes the damage rather than at the store. Both are written
-up where they belong, in [synth/README.md](synth/README.md),
-[fpga/README.md](fpga/README.md) and [docs/spike.md](docs/spike.md).
+**The out-of-order core does not yet pay for itself.** `rv32m.s` is the one
+program where it uses fewer cycles than the pipelined core — 1742 against 1828,
+which is the divide latency being hidden exactly as intended — but a 4.7% cycle
+win cannot cover a clock period 1.2x to 2.7x longer. It loses on wall-clock
+time on every program, and it does so structurally: selecting an instruction,
+reading a 64-entry physical register file, executing and broadcasting all
+happen between the same two registers. Iteration 3's done-when criterion asked
+for a wall-clock win on `rv32m.s` and **that half of it is not met**; the
+lockstep half is. The numbers, the cause, and what would actually fix it are in
+[synth/README.md](synth/README.md) and [docs/roadmap.md](docs/roadmap.md).
+
+Three other things are open. There is no branch predictor, so every taken
+branch drains the out-of-order machine — that is why it loses on cycles
+everywhere except `rv32m.s`. The FPGA target is simulated only, covers the
+first two cores, and its pin assignments and timing closure are unverified. And
+the commit trace reports the store an instruction *intended* — effective
+address, data and width — but not the byte lane shifting downstream of it, so
+that last class of store bug still reports at the load that observes the damage
+rather than at the store. All are written up where they belong, in
+[synth/README.md](synth/README.md), [fpga/README.md](fpga/README.md) and
+[docs/spike.md](docs/spike.md).

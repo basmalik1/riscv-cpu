@@ -97,13 +97,24 @@ compare:
 	done
 
 # ------------------------------------------- mapped to real standard cells
-$(MAPPED): $(FLAT) $(LIBERTY)
+# abc.script is yosys's own default liberty script with a buffering and
+# resizing tail; see the file. Yosys substitutes {D} only in the inline
+# (-script +...) form, and that form cannot carry semicolons through `-p`, so
+# the target is substituted here instead.
+ABC_PS     := $(shell echo '$(ABC_PERIOD) * 1000' | bc)
+ABC_SCRIPT := $(BUILD)/abc.script
+
+$(ABC_SCRIPT): abc.script
+	mkdir -p $(BUILD)
+	sed 's/{D}/$(ABC_PS)/g' $< > $@
+
+$(MAPPED): $(FLAT) $(LIBERTY) $(ABC_SCRIPT)
 	yosys -p " \
 	    read_verilog $(FLAT); \
 	    hierarchy -check -top cpu; \
 	    synth -top cpu -flatten; \
 	    dfflibmap -liberty $(LIBERTY); \
-	    abc -liberty $(LIBERTY) -D $(shell echo '$(ABC_PERIOD) * 1000' | bc); \
+	    abc -liberty $(LIBERTY) -D $(ABC_PS) -script $(ABC_SCRIPT); \
 	    opt_clean; \
 	    stat -liberty $(LIBERTY); \
 	    write_verilog -noattr $(MAPPED); \
@@ -150,6 +161,55 @@ timing-compare:
 	    arr=$$(grep -E 'data arrival time' build/$$c/sta.log | head -1 | awk '{print $$1}'); \
 	    fmax=$$(echo "scale=1; 1000 / $$arr" | bc); \
 	    printf '%-14s critical path %6s ns   fmax %6s MHz\n' "$$c" "$$arr" "$$fmax"; \
+	done
+
+# -------------------------------------------- the artifact-free lower bound
+# `buffer` in abc.script builds fanout trees inside the combinational logic,
+# but flip-flops belong to yosys rather than ABC, so a REGISTERED signal that
+# fans out to a thousand gates still carries its whole load on one DFF_X1.
+# Closing that needs OpenROAD's `repair_design`; see README.
+#
+# Until then the size of the remaining hole is measurable rather than
+# guessable. Cut every path through a net wider than FANOUT_CUT and report the
+# worst path that is left. Nothing on it is charged a load the flow failed to
+# buffer, so it is a genuine delay the design has to pay -- a LOWER BOUND on
+# the critical path, and on two of the three cores it comes back equal to the
+# reported one, which says the reported one was already real.
+FANOUT_CUT ?= 64
+
+.PHONY: timing-bound
+timing-bound: $(MAPPED)
+	@command -v sta >/dev/null || { \
+	    echo "OpenSTA not found. See synth/README.md for the build."; exit 1; }
+	@mkdir -p $(BUILD)
+	@printf 'read_liberty %s\n' "$(LIBERTY)"                    > $(BUILD)/bound.tcl
+	@printf 'read_verilog %s\n' "$(MAPPED)"                    >> $(BUILD)/bound.tcl
+	@printf 'link_design cpu\n'                                >> $(BUILD)/bound.tcl
+	@printf 'create_clock -name clk -period %s [get_ports clk]\n' "$(PERIOD)" >> $(BUILD)/bound.tcl
+	@printf 'set_input_delay 0 -clock clk [all_inputs -no_clocks]\n'  >> $(BUILD)/bound.tcl
+	@printf 'set_output_delay 0 -clock clk [all_outputs]\n'    >> $(BUILD)/bound.tcl
+	@printf 'set cut 0\n'                                      >> $(BUILD)/bound.tcl
+	@printf 'foreach net [get_nets *] {\n'                     >> $(BUILD)/bound.tcl
+	@printf '  if {[llength [get_pins -of_objects $$net]] > %s} {\n' "$(FANOUT_CUT)" >> $(BUILD)/bound.tcl
+	@printf '    set_false_path -through $$net\n'              >> $(BUILD)/bound.tcl
+	@printf '    incr cut\n  }\n}\n'                           >> $(BUILD)/bound.tcl
+	@printf 'puts "nets wider than %s, cut: $$cut"\n' "$(FANOUT_CUT)" >> $(BUILD)/bound.tcl
+	@printf 'report_checks -path_delay max -digits 3 -fields {fanout}\n' >> $(BUILD)/bound.tcl
+	@printf 'exit\n'                                           >> $(BUILD)/bound.tcl
+	sta -no_splash -exit $(BUILD)/bound.tcl 2>&1 | tee $(BUILD)/bound.log
+
+.PHONY: bound-compare
+bound-compare:
+	@for c in $(CORES); do \
+	    $(MAKE) --no-print-directory CORE=$$c timing         > /dev/null 2>&1 || \
+	        { echo "$$c: FAILED (see synth/build/$$c/sta.log)"; continue; }; \
+	    $(MAKE) --no-print-directory CORE=$$c timing-bound   > /dev/null 2>&1 || \
+	        { echo "$$c: FAILED (see synth/build/$$c/bound.log)"; continue; }; \
+	    arr=$$(grep -a 'data arrival time' build/$$c/sta.log   | head -1 | awk '{print $$1}'); \
+	    bnd=$$(grep -a 'data arrival time' build/$$c/bound.log | head -1 | awk '{print $$1}'); \
+	    cut=$$(grep -a 'cut:' build/$$c/bound.log | tail -1 | awk '{print $$NF}'); \
+	    printf '%-14s reported %7s ns   artifact-free %7s ns   (%s wide nets)\n' \
+	        "$$c" "$$arr" "$$bnd" "$$cut"; \
 	done
 
 .PHONY: clean

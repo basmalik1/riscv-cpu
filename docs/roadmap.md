@@ -161,7 +161,7 @@ every test whose operands come from the register file.
 **Still open:** the divider is restoring, one bit per cycle, 34 cycles. Radix-4
 would halve that, and `rv32m.s` shows exactly what it would buy.
 
-## 3. Out-of-order — *in progress*
+## 3. Out-of-order — *built and verified; half the criterion is not met*
 
 Explicit register renaming, R10K style: a flat pool of physical registers with
 a free list, a register alias table, and a reorder buffer that holds only
@@ -209,9 +209,13 @@ register file has exactly one place a value ever lives.
 | `prf` — physical registers with ready bits | done |
 | `rob` — bookkeeping only, since the PRF holds the values | done |
 | `issue_queue` — wakeup and select | done |
+| `fetch` — program counter, redirected at commit | done |
+| `dispatch` — rename, all four allocations or none | done |
+| `execute` — three paths, one result bus | done |
+| `cpu` — the top level, and commit | done |
 
-**All six components are built and tested. Integration follows:** dispatch,
-execute wiring, commit, and the top level.
+All of it is built, unit tested, and mutation tested, and the assembled core
+matches Spike instruction for instruction on all four programs.
 
 Two decisions in the issue queue are worth knowing before reading it. It
 COMPACTS -- entries shift down on issue, so an entry's index is its age and
@@ -250,11 +254,103 @@ layer plus a C library with `printf` and a timer, and this toolchain ships
 neither — see the Setup section of the README. Getting it running is real work
 of its own and says nothing about whether the core is correct.
 
+### Measured: the first half holds, the second does not
+
+**Lockstep passes.** Twelve runs, three cores against Spike on all four
+programs, every one identical instruction for instruction. That half is done.
+
+**The wall-clock claim fails.** Cycles first:
+
+| Test | single-cycle | pipelined | out-of-order |
+|---|---|---|---|
+| `smoke.s` | 22 | 29 | 39 |
+| `rv32i.s` | 470 | 512 | 681 |
+| `rv32m.s` | 396 | 1828 | **1742** |
+| `ctest.c` | 212 | 274 | 559 |
+
+`rv32m.s` is the case this iteration was aimed at, and on cycles it works: the
+out-of-order core issues past a divide the pipeline has to stop for, and takes
+1742 cycles against 1828. That is the latency tolerance the section above
+promised, and it is the only program in the tree where it shows.
+
+It is a 4.7% win, and 4.7% is the entire budget available for clock period.
+Synthesis says the budget is not close to enough:
+
+| Core | critical path | logic depth |
+|---|---|---|
+| pipelined | 2.914 ns | 58 |
+| out-of-order | 7.863 ns | 79 |
+
+`rv32m.s` in wall-clock time is therefore 5.33 us pipelined against 13.70 us
+out-of-order — **2.6x the wrong way**. Even granting the out-of-order core the
+most generous figure its measurement supports, 3.566 ns, it comes to 6.21 us
+and still loses by 17%. Three separate quantities — measured delay, an
+artifact-free lower bound on it, and a gate count that no synthesis weakness
+can flatter — all say the same thing.
+
+### Why, and why the obvious suspect is the wrong one
+
+The tempting explanation is the missing branch predictor, and it is wrong for
+this criterion. Predict-not-taken resolved at commit is why the out-of-order
+core loses on `rv32i.s`, `ctest.c` and `smoke.s`: every taken branch drains the
+machine and walks the reorder buffer behind it. That costs **cycles**. On
+`rv32m.s` the cycle count is already a win. What is lost there is **clock
+period**, and a branch predictor does not shorten a critical path.
+
+The real cause is where the design put its register boundaries. Yosys reports
+the longest path as `u_iq.entries[239]` to `u_prf.data[23][31]` — from an issue
+queue entry into the physical register file. One cycle therefore holds: select
+the oldest ready instruction, mux its payload out of the queue, read two
+operands from a 64-entry register file, compute, and broadcast the result back.
+The pipelined core puts a forwarding mux and an ALU between two registers and
+nothing else. 79 gates against 58 is that difference counted.
+
+Fixing it means cutting that path — a register between select and register-file
+read, so issue and execute are separate cycles. That costs a cycle of
+issue-to-execute latency and forces wakeup to speculate on the result of an
+instruction that has not read its operands yet, which is what a real machine
+does and is a redesign of the wakeup loop rather than a tuning pass.
+
+### What this iteration did buy
+
+Stating it plainly, since the criterion it set itself is not met:
+
+- A correct single-issue out-of-order machine, R10K style, verified to the same
+  standard as the other two cores — Spike lockstep on four programs, unit tests
+  on all eleven modules, and a mutation gate over the lot.
+- Confirmation that the latency-tolerance argument is real: `rv32m.s` is faster
+  in cycles, and it is faster for exactly the predicted reason.
+- The measurement that says the design is bounded by its issue-to-writeback
+  path rather than by anything speculative, which is what makes the next
+  iteration's target obvious rather than a guess.
+
+What it does not buy is a faster processor, and the criterion was right to ask
+for one. Restating the criterion so that it passes would be the dishonest
+version of this section; the useful version is that a single-issue out-of-order
+core that resolves select, register read and execute in one cycle cannot beat a
+five-stage pipeline on wall-clock time, and that is now measured rather than
+suspected.
+
 ## 4. Advanced features
 
 Caches, branch prediction, superscalar issue, a faster divider — picked based
-on what the IPC numbers say is actually the bottleneck. Multiply and divide
-came early instead; see 2.5.
+on what the numbers say is actually the bottleneck. Multiply and divide came
+early instead; see 2.5.
+
+Iteration 3 turned that from a list into an order, because it produced the two
+measurements that rank it:
+
+1. **Cut the issue-to-writeback path.** This is what the out-of-order core
+   loses on and nothing else on this list touches it. A register between select
+   and register-file read, and a wakeup loop that speculates across it.
+2. **Branch prediction.** Worth 3 of the 4 programs' cycle counts, and cheap
+   next to the above. It is second only because it cannot fix the criterion
+   iteration 3 failed.
+3. **A radix-4 divider**, which `rv32m.s` has been asking for since 2.5.
+
+Superscalar issue and caches stay after those: both make a machine that is
+already clock-period bound wider, and widening the thing that is too slow is
+the wrong order to do the work in.
 
 ## Memory model per iteration
 
@@ -299,21 +395,28 @@ Three consequences worth remembering:
   all. Both are in [spike.md](spike.md), including what is compared and what
   is not -- memory writes are not, which is the honest remaining gap.
 
-- **Nanosecond timing.** *Done.* `synth/` now maps to Nangate45 and runs
-  OpenSTA: single-cycle 27.172 ns against pipelined 4.587 ns, a gap of about
-  6x, with logic depth corroborating at 498 against 58. Two significant figures
-  is all this flow supports; repeated runs move the ratio by a percent or two. Neither core infers a latch and
-  both pass `hierarchy -check`, which is the real synthesizability result —
-  this RTL maps to gates rather than merely linting.
+- **Nanosecond timing.** *Done.* `synth/` maps to Nangate45 and runs OpenSTA:
+  single-cycle 19.117 ns against pipelined 2.914 ns, a gap of about 6.6x, with
+  logic depth corroborating at 498 against 58. Two significant figures is all
+  this flow supports; repeated runs move the ratio by a percent or two. No core
+  infers a latch and all three pass `hierarchy -check`, which is the real
+  synthesizability result — this RTL maps to gates rather than merely linting.
 
-  Two caveats survive, and one has been resolved. The pipelined figure is still
-  inflated by the missing buffering pass (71% of its path is one unbuffered
-  mux), so 6x is a floor rather than an estimate; closing that needs
-  OpenROAD's `repair_design`, which means installing OpenROAD proper. And
-  memory remains outside the synthesized module, so the single-cycle number
+  The buffering caveat that used to sit here is mostly gone. `synth/abc.script`
+  adds `buffer`, `upsize` and `dnsize` after the mapper, which cut the three
+  cores from 27.172 / 4.587 / 46.941 ns to 19.117 / 2.914 / 7.863. And the size
+  of what remains is now measured rather than estimated: `make bound-compare`
+  cuts every path through a net wider than 64 loads and reports the worst path
+  left, which for both scalar cores is the reported path unchanged. Those two
+  numbers are measurements.
+
+  Two caveats survive. The out-of-order core still carries one 1504-fanout
+  squash broadcast that no pass in this flow can buffer, because yosys owns the
+  flip-flops and ABC cannot see them — so its critical path is known only to
+  lie in [3.566, 7.863] ns, and closing that needs OpenROAD's `repair_design`.
+  And memory remains outside the synthesized module, so the single-cycle number
   omits the access that forces its board top to 12.5 MHz — it understates the
-  gap further. What is no longer a caveat is the size of the difference: at 7%
-  the measurement error swamped the claim, and at 6x it does not.
+  gap further.
 
   Note also that Yosys cannot read this design directly. Its built-in frontend
   rejects any user-defined type declared at file scope, package or not, though
