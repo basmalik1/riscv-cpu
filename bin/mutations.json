@@ -126,6 +126,21 @@
         "name": "write enable inverted",
         "old": "        end else if (we && (rd_addr != {ARCH_BITS{1'b0}})) begin",
         "new": "        end else if (!we && (rd_addr != {ARCH_BITS{1'b0}})) begin"
+      },
+      {
+        "name": "restore is ignored, leaving squashed mappings in place",
+        "old": "        end else if (restore) begin",
+        "new": "        end else if (restore && 1'b0) begin"
+      },
+      {
+        "name": "a rename in the flush cycle wins over the restore",
+        "old": "        end else if (restore) begin\n            // Ahead of the write on purpose. A rename in the cycle a flush\n            // starts belongs to an instruction being squashed, so applying it\n            // over the restored table would reintroduce exactly the mapping\n            // the restore exists to remove.\n            map <= restore_map;\n        end else if (we && (rd_addr != {ARCH_BITS{1'b0}})) begin\n            map[rd_addr] <= rd_tag;\n        end",
+        "new": "        end else if (we && (rd_addr != {ARCH_BITS{1'b0}})) begin\n            map[rd_addr] <= rd_tag;\n        end else if (restore) begin\n            map <= restore_map;\n        end"
+      },
+      {
+        "name": "map_out reports a stale copy of the table",
+        "old": "    assign map_out = map;",
+        "new": "    assign map_out = {map[0], map[ARCH_REGS-1:1]};"
       }
     ]
   },
@@ -401,6 +416,41 @@
         "name": "the memory access is not gated, so every instruction reads",
         "old": "    assign mem_start    = accept_mem;",
         "new": "    assign mem_start    = issue_valid;"
+      }
+    ]
+  },
+  "fetch": {
+    "testbench": "tb_fetch",
+    "cases": [
+      {
+        "name": "the replay select is inverted",
+        "old": "    assign inst      = held_valid ? held_inst : imem_rdata;",
+        "new": "    assign inst      = held_valid ? imem_rdata : held_inst;"
+      },
+      {
+        "name": "the instruction is captured a cycle too late",
+        "old": "        end else if (stall && !held_valid) begin",
+        "new": "        end else if (stall && held_valid) begin"
+      },
+      {
+        "name": "the two program counters are swapped",
+        "old": "    assign imem_addr = pc_fetch;\n    assign pc        = pc_present;",
+        "new": "    assign imem_addr = pc_present;\n    assign pc        = pc_fetch;"
+      },
+      {
+        "name": "the pc advances during a stall",
+        "old": "        end else if (!stall) begin\n            pc_present    <= pc_fetch;",
+        "new": "        end else if (1'b1) begin\n            pc_present    <= pc_fetch;"
+      },
+      {
+        "name": "a flush leaves the previous instruction looking valid",
+        "old": "            valid_present <= 1'b0;\n        end else if (!stall) begin",
+        "new": "            valid_present <= 1'b1;\n        end else if (!stall) begin"
+      },
+      {
+        "name": "the pc advances by one byte rather than one instruction",
+        "old": "            pc_fetch      <= pc_fetch + 32'd4;",
+        "new": "            pc_fetch      <= pc_fetch + 32'd1;"
       }
     ]
   }

@@ -154,7 +154,7 @@ its low byte, which is the `JAL` opcode, so a runaway fetch into a poisoned gap
 jumps rather than faulting. Zero is the safer default for exactly that reason —
 all-zero is a defined illegal instruction.
 
-Run the unit tests — 22657 checks across nineteen testbenches: the ALU,
+Run the unit tests — 22712 checks across twenty testbenches: the ALU,
 register file, decoder, hazard unit, multiply/divide unit, all five pipeline
 stages, a cycle-level harness for the assembled pipeline, and the out-of-order
 structures built so far:
@@ -230,7 +230,7 @@ those numbers live.
 Both cores execute the full RV32I base integer set and the M extension, pass
 the same tests, and produce byte-identical commit traces. Verified at four
 levels: every retired instruction checked against Spike, a 126-check ISA
-regression across two programs, 22657 unit checks including a cycle-level
+regression across two programs, 22712 unit checks including a cycle-level
 pipeline harness, and mutation testing of all of it — deliberate bugs are
 injected to confirm the suites can actually fail.
 

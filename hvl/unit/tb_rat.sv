@@ -31,6 +31,8 @@ module tb_rat;
     logic [4:0] rs1_addr, rs2_addr, rd_addr;
     logic [5:0] rs1_tag, rs2_tag, rd_tag, rd_old_tag;
     logic       we;
+    logic [31:0][5:0] map_out, restore_map;
+    logic             restore;
 
     rat #(.PHYS_REGS(PHYS), .ARCH_REGS(ARCH)) dut (.*);
 
@@ -51,6 +53,10 @@ module tb_rat;
     task automatic reset_dut();
         rst = 1'b1; we = 1'b0;
         rs1_addr = '0; rs2_addr = '0; rd_addr = '0; rd_tag = '0;
+        restore = 1'b0;
+        for (int i = 0; i < int'(ARCH); i++) begin
+            restore_map[i] = 6'(i);
+        end
         @(negedge clk);
         @(negedge clk);
         rst = 1'b0;
@@ -184,6 +190,61 @@ module tb_rat;
             expect_eq("final state matches the model",
                       {26'd0, rs1_tag}, {26'd0, model[i]});
         end
+
+        // ---- the whole table, for recovery -------------------------------
+        reset_dut();
+        write_map(5'd7, 6'd40);
+        #1;
+        expect_eq("map_out shows a remapped entry",  {26'd0, map_out[7]}, 32'd40);
+        expect_eq("map_out shows an untouched entry", {26'd0, map_out[3]}, 32'd3);
+
+        // ---- restore replaces every entry in one cycle --------------------
+        // How the speculative table becomes the retirement one again after a
+        // mispredict. One cycle, because undoing renames one at a time only
+        // works youngest-first and the squash walk runs oldest-first.
+        for (int i = 0; i < int'(ARCH); i++) begin
+            restore_map[i] = 6'(32 + i);
+        end
+        restore = 1'b1;
+        @(negedge clk);
+        restore = 1'b0;
+        for (int i = 0; i < int'(ARCH); i++) begin
+            rs1_addr = 5'(i);
+            #1;
+            expect_eq("restore replaced every entry",
+                      {26'd0, rs1_tag}, 32'd32 + i);
+        end
+
+        // ---- restore beats a rename in the same cycle ---------------------
+        // A rename arriving as a flush starts belongs to an instruction being
+        // squashed. Letting it land over the restored table would put back
+        // exactly the mapping the restore exists to remove.
+        for (int i = 0; i < int'(ARCH); i++) begin
+            restore_map[i] = 6'(i);
+        end
+        restore  = 1'b1;
+        rd_addr  = 5'd9;
+        rd_tag   = 6'd55;
+        we       = 1'b1;
+        @(negedge clk);
+        restore  = 1'b0;
+        we       = 1'b0;
+        rs1_addr = 5'd9;
+        #1;
+        expect_eq("restore wins over a concurrent rename",
+                  {26'd0, rs1_tag}, 32'd9);
+
+        // And with restore low, that same rename does land -- so the check
+        // above is about precedence, not about the write being broken.
+        rd_addr = 5'd9;
+        rd_tag  = 6'd55;
+        we      = 1'b1;
+        @(negedge clk);
+        we      = 1'b0;
+        rs1_addr = 5'd9;
+        #1;
+        expect_eq("the rename lands when nothing is restoring",
+                  {26'd0, rs1_tag}, 32'd55);
 
         report("rat");
     end

@@ -24,11 +24,14 @@
 // avoid allocating a tag for an instruction whose destination is x0 at all;
 // the guard here is what makes that safe rather than merely conventional.
 //
-// NOT here yet: restore. Recovering the speculative table from the retirement
-// one after a mispredict is the other half of flush, and the shape of that port
-// depends on decisions the reorder buffer has not forced yet -- whether the
-// copy happens in one cycle across a wide bus or is walked over several. Adding
-// a plausible-looking one now would be guessing.
+// RESTORE, which the reorder buffer forced the shape of. After a mispredict the
+// speculative table has to become the retirement one again, and there are two
+// ways to get there. Undoing each squashed rename in turn is tempting because
+// the reorder buffer is already walking those entries -- but it only works
+// walking YOUNGEST FIRST, and that walk runs oldest first, so a register
+// renamed twice would be restored to the middle mapping rather than the
+// original. Copying the whole table in one cycle avoids the ordering question
+// entirely, at the price of a 192-bit bus between the two instances.
 
 module rat #(
     parameter int unsigned PHYS_REGS = 64,
@@ -52,13 +55,27 @@ module rat #(
     // buffer has to carry this so commit knows which tag to release: the tag
     // an instruction frees is the one its destination pointed at BEFORE it,
     // never its own, because its own is what the architectural state becomes.
-    output logic [$clog2(PHYS_REGS)-1:0] rd_old_tag
+    output logic [$clog2(PHYS_REGS)-1:0] rd_old_tag,
+
+    // The whole table, for the copy described above. The retirement instance
+    // drives this; the speculative one takes it back through restore.
+    output logic [ARCH_REGS-1:0][$clog2(PHYS_REGS)-1:0] map_out,
+
+    // Held for the whole flush rather than pulsed. The retirement table cannot
+    // move during a squash walk -- nothing commits while one is running -- so
+    // copying it on every cycle of the walk is the same as copying it once,
+    // and needs no edge to be caught.
+    input  logic                                       restore,
+    input  logic [ARCH_REGS-1:0][$clog2(PHYS_REGS)-1:0] restore_map
 );
 
     localparam int unsigned ARCH_BITS = $clog2(ARCH_REGS);
     localparam int unsigned PHYS_BITS = $clog2(PHYS_REGS);
 
-    logic [PHYS_BITS-1:0] map [ARCH_REGS];
+    // Packed, so the whole table is one value that can be copied in a cycle.
+    logic [ARCH_REGS-1:0][PHYS_BITS-1:0] map;
+
+    assign map_out = map;
 
     // All three reads see the state before this cycle's write.
     assign rs1_tag    = map[rs1_addr];
@@ -74,6 +91,12 @@ module rat #(
             for (int i = 0; i < int'(ARCH_REGS); i++) begin
                 map[i] <= PHYS_BITS'(unsigned'(i));
             end
+        end else if (restore) begin
+            // Ahead of the write on purpose. A rename in the cycle a flush
+            // starts belongs to an instruction being squashed, so applying it
+            // over the restored table would reintroduce exactly the mapping
+            // the restore exists to remove.
+            map <= restore_map;
         end else if (we && (rd_addr != {ARCH_BITS{1'b0}})) begin
             map[rd_addr] <= rd_tag;
         end

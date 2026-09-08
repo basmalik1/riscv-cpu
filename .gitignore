@@ -15,3 +15,6 @@ sim/fpga/
 sim/unit/
 synth/build/
 synth/pdk/
+
+# Session tooling, not project content.
+.claude/
