@@ -5,12 +5,11 @@ and simulation, Spike as the golden model, GTKWave for waves, Yosys and sv2v
 for synthesis, OpenSTA against the Nangate45 cell library for timing, and Make
 and Python for glue.
 
-Two cores share the same ports and the same tests — a single-cycle one and a
-five-stage pipelined one — so they can be compared directly. Both implement the
-base integer set and the M extension; the multiply/divide unit is one module
-parameterised by whether its divider is combinational or iterative, which is
-where the two designs differ most sharply. There is also a
-DE10-Lite FPGA target, simulated but not yet run on hardware. See
+Three cores share the same ports and the same tests — single-cycle, five-stage
+pipelined, and single-issue out-of-order — so they can be compared directly.
+All three implement the base integer set and the M extension, and all three are
+checked against Spike instruction for instruction. There is also a DE10-Lite
+FPGA target for the first two, simulated but not yet run on hardware. See
 [docs/roadmap.md](docs/roadmap.md) for where it goes next.
 
 The layout separates synthesizable RTL from testbench code and keeps each tool
@@ -116,10 +115,11 @@ cd sim && make run_verilator_top_tb PROG=../testcode/smoke.s   # quick check
 cd sim && make run_verilator_top_tb PROG=../testcode/ctest.c   # C toolchain
 ```
 
-There are two cores. `CORE=` picks one, defaulting to the single-cycle:
+There are three cores. `CORE=` picks one, defaulting to the single-cycle:
 
 ```bash
 cd sim && make CORE=pipelined run_verilator_top_tb PROG=../testcode/rv32i.s
+cd sim && make CORE=ooo       run_verilator_top_tb PROG=../testcode/rv32m.s
 ```
 
 Both expose the same ports, so the testbench and the FPGA top take either. Each
@@ -154,7 +154,7 @@ its low byte, which is the `JAL` opcode, so a runaway fetch into a poisoned gap
 jumps rather than faulting. Zero is the safer default for exactly that reason —
 all-zero is a defined illegal instruction.
 
-Run the unit tests — 22716 checks across twenty testbenches: the ALU,
+Run the unit tests — 22717 checks across twenty testbenches: the ALU,
 register file, decoder, hazard unit, multiply/divide unit, all five pipeline
 stages, a cycle-level harness for the assembled pipeline, and the out-of-order
 structures built so far:
@@ -230,7 +230,7 @@ those numbers live.
 Both cores execute the full RV32I base integer set and the M extension, pass
 the same tests, and produce byte-identical commit traces. Verified at four
 levels: every retired instruction checked against Spike, a 126-check ISA
-regression across two programs, 22716 unit checks including a cycle-level
+regression across two programs, 22717 unit checks including a cycle-level
 pipeline harness, and mutation testing of all of it — deliberate bugs are
 injected to confirm the suites can actually fail.
 

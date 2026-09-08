@@ -140,7 +140,13 @@ module rob #(
     assign commit_rd_phys    = head_entry.rd_phys;
     assign commit_writes_reg = head_entry.writes_reg;
     assign commit_pc         = head_entry.pc;
-    assign commit_halt       = head_entry.is_halt;
+    // Gated on commit, like every other commit output. Ungated it reports a
+    // halt as soon as the instruction reaches the head, which is BEFORE it has
+    // finished -- so the machine stops while its last instruction is still in
+    // flight and that instruction never commits. Whether that loses it depends
+    // on whether it happened to complete before reaching the head, which is a
+    // race: rv32i.s traced its halt and smoke.s did not.
+    assign commit_halt       = commit && head_entry.is_halt;
 
     assign flush = flushing;
 

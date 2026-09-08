@@ -256,6 +256,11 @@
         "name": "a squashed entry frees regardless of writes_reg",
         "old": "            free_valid = !empty && head_entry.writes_reg;",
         "new": "            free_valid = !empty;"
+      },
+      {
+        "name": "halt is reported before the instruction commits",
+        "old": "    assign commit_halt       = commit && head_entry.is_halt;",
+        "new": "    assign commit_halt       = head_entry.is_halt;"
       }
     ]
   },

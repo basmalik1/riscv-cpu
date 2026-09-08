@@ -195,6 +195,16 @@ module tb_rob;
         // ---- the halt flag rides through ----------------------------------
         reset_dut();
         do_alloc(5'd0, 6'd0, 6'd0, 1'b0, 32'hC000_0000, 1'b1, i0);
+
+        // Not while it is still in flight. Reporting halt as soon as the
+        // instruction reaches the head stops the machine before that
+        // instruction commits, so it never retires and never reaches the trace.
+        // This was a real bug and an instructive one: whether it lost the halt
+        // depended on whether the instruction happened to finish before
+        // reaching the head, so smoke.s lost its halt and rv32i.s did not.
+        settle();
+        expect_bit("halt not reported before it completes", commit_halt, 1'b0);
+
         do_complete(i0, 1'b0, 32'd0);
         settle();
         expect_bit("halt reported at commit", commit_halt, 1'b1);
