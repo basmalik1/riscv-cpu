@@ -283,5 +283,65 @@
         "new": "        if (rst) begin"
       }
     ]
+  },
+  "dispatch": {
+    "testbench": "tb_dispatch",
+    "cases": [
+      {
+        "name": "a tag is taken even when the rob or iq is full",
+        "old": "    assign free_alloc = fire && allocates;",
+        "new": "    assign free_alloc = valid && allocates;"
+      },
+      {
+        "name": "the alias table is written even when dispatch does not fire",
+        "old": "    assign rat_we     = fire && allocates;",
+        "new": "    assign rat_we     = valid && allocates;"
+      },
+      {
+        "name": "the rob is allocated even when dispatch does not fire",
+        "old": "    assign rob_alloc  = fire;",
+        "new": "    assign rob_alloc  = valid;"
+      },
+      {
+        "name": "the prf allocate escapes the fire gate",
+        "old": "    assign prf_alloc  = fire && allocates;",
+        "new": "    assign prf_alloc  = valid && allocates;"
+      },
+      {
+        "name": "readiness requires the pool to be EMPTY",
+        "old": "    assign ready = rob_ready && iq_ready && (!allocates || free_valid);",
+        "new": "    assign ready = rob_ready && iq_ready && (!allocates || !free_valid);"
+      },
+      {
+        "name": "x0 destinations allocate a physical register",
+        "old": "    assign allocates = regf_we && (rd_addr != 5'd0);",
+        "new": "    assign allocates = regf_we;"
+      },
+      {
+        "name": "the rob is told its own tag and the displaced one swapped",
+        "old": "    assign rob_rd_phys     = free_tag;",
+        "new": "    assign rob_rd_phys     = rat_rd_old_tag;"
+      },
+      {
+        "name": "the register file is read at the wrong source tag",
+        "old": "    assign prf_rs1_tag = rat_rs1_tag;",
+        "new": "    assign prf_rs1_tag = rat_rs2_tag;"
+      },
+      {
+        "name": "the issue queue is told the wrong readiness",
+        "old": "    assign iq_rs1_ready = prf_rs1_ready;",
+        "new": "    assign iq_rs1_ready = !prf_rs1_ready;"
+      },
+      {
+        "name": "the payload claims x0 destinations write a register",
+        "old": "        iq_payload.writes_reg  = allocates;",
+        "new": "        iq_payload.writes_reg  = regf_we;"
+      },
+      {
+        "name": "the store immediate has its halves swapped",
+        "old": "            imm_s:   imm = {{20{inst[31]}}, inst[31:25], inst[11:7]};",
+        "new": "            imm_s:   imm = {{20{inst[31]}}, inst[11:7], inst[31:25]};"
+      }
+    ]
   }
 }
