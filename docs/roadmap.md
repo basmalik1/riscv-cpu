@@ -154,16 +154,66 @@ every test whose operands come from the register file.
 **Still open:** the divider is restoring, one bit per cycle, 34 cycles. Radix-4
 would halve that, and `rv32m.s` shows exactly what it would buy.
 
-## 3. Out-of-order
+## 3. Out-of-order — *in progress*
 
-Tomasulo-style: register rename, reservation stations, a reorder buffer,
-in-order commit.
+Explicit register renaming, R10K style: a flat pool of physical registers with
+a free list, a register alias table, and a reorder buffer that holds only
+bookkeeping. Single-issue — one instruction renamed and dispatched per cycle,
+one committed per cycle, out-of-order execution in between.
 
-New: `hdl/` grows the rename/dispatch/ROB/RS modules, and `hvl/` needs a real
-commit-log monitor to keep the verification honest.
+### Why not Tomasulo, which this section used to say
 
-**Done when:** CoreMark runs to completion and commits match the golden model
-instruction for instruction.
+Tomasulo with a reorder buffer is the other standard answer, and it is tempting
+because it needs fewer structures. If a ROB slot doubles as both the rename tag
+and the storage for the value, there is no physical register file to build and
+no free list either.
+
+Two things argue against it here.
+
+**It has no seam to test against.** That saving comes from fusing tag
+allocation, value storage, dependent wakeup and commit into a single module. A
+design with fewer parts is not automatically simpler to verify — it is simpler
+to *write*, and then the first thing capable of checking any of it is a whole
+working core. Building this iteration one tested component at a time is the
+plan, and that style does not allow it.
+
+**It stores every result twice**, once in the ROB entry and once again in each
+reservation-station entry that captured it off the broadcast. Two copies of a
+value are two things that can disagree, and the bugs that follow are of the
+kind that only appear under a particular timing of the broadcast. A physical
+register file has exactly one place a value ever lives.
+
+### Components, each tested before anything is wired together
+
+| Component | State |
+|---|---|
+| `fifo` — the circular queue the rest are built on | done |
+| `free_list` — a FIFO of physical tags | |
+| `rat` — architectural to physical map, plus the retirement copy | |
+| `prf` — physical registers with ready bits | |
+| `rob` — bookkeeping only, since the PRF holds the values | |
+| `issue_queue` — wakeup and select | |
+
+Integration follows: dispatch, execute wiring, commit, and the top level.
+
+**Done when:** `make lockstep` passes on every program in `testcode/` for the
+out-of-order core, and that core beats the pipelined one in wall-clock time on
+`rv32m.s`.
+
+The second half is the honest measure of what this iteration buys, and it is
+worth being precise about why it is not an IPC target. **A single-issue
+out-of-order core cannot beat IPC 1.0 either** — it commits one instruction per
+cycle at best, exactly like the pipeline, and the same correction that applies
+to iteration 2 applies here. What it buys is latency tolerance: the pipelined
+core stops the entire machine for 33 cycles on every divide, 43 times over in
+`rv32m.s`, while an out-of-order core keeps issuing independent work past it.
+`rv32m.s` is the one program already in the tree where that difference shows,
+and it is the case the pipelined core currently *loses* on the board.
+
+**Not** CoreMark, which this section used to ask for. CoreMark needs a porting
+layer plus a C library with `printf` and a timer, and this toolchain ships
+neither — see the Setup section of the README. Getting it running is real work
+of its own and says nothing about whether the core is correct.
 
 ## 4. Advanced features
 
@@ -181,17 +231,26 @@ it.
 | Model | Read latency | Iteration | What it makes real |
 |---|---|---|---|
 | Combinational / "magic" | 0 | 1 — single-cycle | nothing; anything slower breaks the one-cycle contract |
-| Synchronous read (true BRAM) | 1, fixed | 2 — pipelined | load-use hazards, IF/MEM stage stalls |
-| Variable latency + `resp` handshake | variable | 3 — out-of-order | something worth reordering around |
+| Synchronous read (true BRAM) | 1, fixed | 2 — pipelined, and 3's first cut | load-use hazards, IF/MEM stage stalls |
+| Variable latency + `resp` handshake | variable | 3, once there is a load/store queue | something worth reordering around |
 | Burst SDRAM + FR-FCFS | long, reordered | 4 — advanced | what caches and prefetch get measured against |
 
-Two consequences worth remembering:
+Three consequences worth remembering:
 
 - A synchronous read is not an option in iteration 1. It forces either 2 cycles
   per instruction or a negedge-clocked memory hack, and neither is a
   single-cycle design any more.
-- The `resp` handshake is deliberately *not* pre-built. The pipelined iteration
-  rewrites `hdl/cpu.sv` wholesale, so adding it now buys nothing.
+- Iteration 3 does **not** start on variable-latency memory, despite the row
+  above once saying it did. The first out-of-order cut keeps the fixed 1-cycle
+  synchronous read and keeps loads and stores in program order relative to each
+  other. Rename, wakeup and precise commit are enough new machinery to debug at
+  once; memory disambiguation is its own step, and the variable-latency model
+  only becomes worth having when there is a load/store queue able to do
+  something about it.
+- The `resp` handshake is deliberately *not* pre-built, for the same reason it
+  was not pre-built for iteration 2: each iteration rewrites the core's top
+  level wholesale, so a handshake added before the structure that uses it just
+  becomes something to port.
 
 ---
 

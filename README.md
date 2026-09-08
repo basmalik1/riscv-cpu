@@ -14,8 +14,9 @@ DE10-Lite FPGA target, simulated but not yet run on hardware. See
 [docs/roadmap.md](docs/roadmap.md) for where it goes next.
 
 The layout separates synthesizable RTL from testbench code and keeps each tool
-in its own directory, so the pipelined and out-of-order iterations drop in
-without moving anything.
+in its own directory, so each new core drops in beside the last rather than
+replacing it. The pipelined one did; the out-of-order one is being built the
+same way.
 
 ```
 bin/       toolchain scripts, linker script, C startup code
