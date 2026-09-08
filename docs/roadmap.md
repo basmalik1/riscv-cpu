@@ -125,6 +125,13 @@ semantics, and a `SEQUENTIAL` parameter that picks the divider implementation.
 The single-cycle core takes the combinational one, the pipelined core the
 iterative one.
 
+Written rather than instantiated. The ordinary route to RV32M on a commercial
+flow is a vendor arithmetic macro — Synopsys DesignWare has both a pipelined
+multiplier and a pipelined divider, and reaching for them is one line. There is
+no open-source equivalent, and that is the point: an RV32M core that depends on
+a licensed macro library is not a core anyone can rebuild. The measurements in
+`mdu.sv` are what writing it instead bought and cost.
+
 It landed here rather than in iteration 4 for two reasons.
 
 **It is the first thing that makes the two designs genuinely different.** Until
@@ -161,7 +168,18 @@ a free list, a register alias table, and a reorder buffer that holds only
 bookkeeping. Single-issue — one instruction renamed and dispatched per cycle,
 one committed per cycle, out-of-order execution in between.
 
-### Why not Tomasulo, which this section used to say
+### Why explicit register renaming, and not Tomasulo
+
+A word on motivation first, kept separate from the argument because the two are
+different things.
+
+I have built a Tomasulo machine before, and built it on proprietary tooling:
+Synopsys DesignWare IP for the multiplier and divider, a licensed simulator, a
+licensed synthesis flow. Doing the other style of renaming, on a toolchain
+anyone can install from apt, is a good part of why this iteration interests me.
+That is a preference and not a reason. The reasons follow.
+
+(This section previously said Tomasulo. It was describing the wrong design.)
 
 Tomasulo with a reorder buffer is the other standard answer, and it is tempting
 because it needs fewer structures. If a ROB slot doubles as both the rename tag
