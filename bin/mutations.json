@@ -1,0 +1,134 @@
+{
+  "fifo": {
+    "testbench": "tb_fifo",
+    "cases": [
+      {
+        "name": "full/empty wrap bit compared the wrong way",
+        "old": "    assign full  = (head[PTR] != tail[PTR]) && (head[PTR-1:0] == tail[PTR-1:0]);",
+        "new": "    assign full  = (head[PTR] == tail[PTR]) && (head[PTR-1:0] == tail[PTR-1:0]);"
+      },
+      {
+        "name": "push not gated on full",
+        "old": "    assign do_push = push && (!full || pop);",
+        "new": "    assign do_push = push;"
+      },
+      {
+        "name": "no push into a full queue even when popping",
+        "old": "    assign do_push = push && (!full || pop);",
+        "new": "    assign do_push = push && !full;"
+      },
+      {
+        "name": "pop not gated on empty",
+        "old": "    assign do_pop  = pop  && !empty;",
+        "new": "    assign do_pop  = pop;"
+      },
+      {
+        "name": "count computed backwards",
+        "old": "    assign count = tail - head;",
+        "new": "    assign count = head - tail;"
+      },
+      {
+        "name": "INIT_FULL comes up empty",
+        "old": "                tail <= {1'b1, {PTR{1'b0}}};    // DEPTH, so full",
+        "new": "                tail <= '0;"
+      },
+      {
+        "name": "INIT_BASE ignored, tags start at zero",
+        "old": "                    mem[i] <= WIDTH'(INIT_BASE + unsigned'(i));",
+        "new": "                    mem[i] <= WIDTH'((INIT_BASE * 0) + unsigned'(i));"
+      },
+      {
+        "name": "head advances by two on a pop",
+        "old": "                head <= head + 1'b1;",
+        "new": "                head <= head + {{(PTR-1){1'b0}}, 2'd2};"
+      },
+      {
+        "name": "push writes at the head instead of the tail",
+        "old": "                mem[tail[PTR-1:0]] <= push_data;",
+        "new": "                mem[head[PTR-1:0]] <= push_data;"
+      }
+    ]
+  },
+
+  "free_list": {
+    "testbench": "tb_free_list",
+    "cases": [
+      {
+        "name": "pool starts at 0, handing out architectural tags",
+        "old": "        .INIT_BASE (ARCH_REGS)",
+        "new": "        .INIT_BASE (0)"
+      },
+      {
+        "name": "pool comes up empty instead of full",
+        "old": "        .INIT_FULL (1'b1),",
+        "new": "        .INIT_FULL (1'b0),"
+      },
+      {
+        "name": "alloc_valid inverted",
+        "old": "    assign alloc_valid = !pool_empty;",
+        "new": "    assign alloc_valid = pool_empty;"
+      },
+      {
+        "name": "first tag off by one",
+        "old": "        .INIT_BASE (ARCH_REGS)",
+        "new": "        .INIT_BASE (ARCH_REGS + 1)"
+      },
+      {
+        "name": "commit frees the wrong tag",
+        "old": "        .push_data (free_tag),",
+        "new": "        .push_data (~free_tag),"
+      },
+      {
+        "name": "allocate and free wired to the wrong ends of the queue",
+        "old": "        .push      (free),\n        .push_data (free_tag),\n        .pop       (alloc),\n        .pop_data  (alloc_tag),",
+        "new": "        .push      (alloc),\n        .push_data (free_tag),\n        .pop       (free),\n        .pop_data  (alloc_tag),"
+      }
+    ]
+  },
+
+  "rat": {
+    "testbench": "tb_rat",
+    "cases": [
+      {
+        "name": "write-first instead of read-first",
+        "old": "    assign rs1_tag    = map[rs1_addr];\n    assign rs2_tag    = map[rs2_addr];",
+        "new": "    assign rs1_tag    = (we && rs1_addr == rd_addr) ? rd_tag : map[rs1_addr];\n    assign rs2_tag    = (we && rs2_addr == rd_addr) ? rd_tag : map[rs2_addr];"
+      },
+      {
+        "name": "rd_old_tag reports the new tag, not the displaced one",
+        "old": "    assign rd_old_tag = map[rd_addr];",
+        "new": "    assign rd_old_tag = we ? rd_tag : map[rd_addr];"
+      },
+      {
+        "name": "x0 guard protects the wrong register",
+        "old": "        end else if (we && (rd_addr != {ARCH_BITS{1'b0}})) begin",
+        "new": "        end else if (we && (rd_addr != {ARCH_BITS{1'b1}})) begin"
+      },
+      {
+        "name": "reset maps everything to physical register 0",
+        "old": "                map[i] <= PHYS_BITS'(unsigned'(i));",
+        "new": "                map[i] <= PHYS_BITS'(unsigned'(i) * 0);"
+      },
+      {
+        "name": "reset identity off by one",
+        "old": "                map[i] <= PHYS_BITS'(unsigned'(i));",
+        "new": "                map[i] <= PHYS_BITS'(unsigned'(i) + 1);"
+      },
+      {
+        "name": "write lands on the wrong entry",
+        "old": "            map[rd_addr] <= rd_tag;",
+        "new": "            map[rs1_addr] <= rd_tag;"
+      },
+      {
+        "name": "rs2 reads a neighbouring entry",
+        "old": "    assign rs2_tag    = map[rs2_addr];",
+        "new": "    assign rs2_tag    = map[rs2_addr ^ 5'd1];"
+      },
+      {
+        "name": "write enable inverted",
+        "old": "        end else if (we && (rd_addr != {ARCH_BITS{1'b0}})) begin",
+        "new": "        end else if (!we && (rd_addr != {ARCH_BITS{1'b0}})) begin"
+      }
+    ]
+  }
+}

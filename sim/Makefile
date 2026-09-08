@@ -199,6 +199,22 @@ unit:
 	    echo -e "\033[0;32mall $$pass unit tests passed\033[0m"; \
 	fi
 
+# ----------------------------------------------------------------------------
+# Mutation testing. bin/mutate.py breaks a module on purpose and checks its
+# testbench notices; see bin/mutations.json for the bugs it injects.
+#
+# The print-% target below is how that script asks for the source list rather
+# than keeping its own copy. Two copies would drift, and the tool would end up
+# testing something other than what `make unit` builds.
+# ----------------------------------------------------------------------------
+.PHONY: print-%
+print-%:
+	@echo '$($*)'
+
+.PHONY: mutate
+mutate:
+	python3 $(PWD)/../bin/mutate.py $(if $(MODULE),$(MODULE),--all)
+
 .PHONY: waves
 waves:
 	gtkwave $(VDIR)/dump.fst

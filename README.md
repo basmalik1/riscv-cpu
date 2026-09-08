@@ -154,13 +154,31 @@ its low byte, which is the `JAL` opcode, so a runaway fetch into a poisoned gap
 jumps rather than faulting. Zero is the safer default for exactly that reason —
 all-zero is a defined illegal instruction.
 
-Run the unit tests — 614 checks across eleven testbenches: the ALU, register
-file, decoder, hazard unit, multiply/divide unit, all five pipeline stages, and
-a cycle-level harness for the assembled pipeline:
+Run the unit tests — 10164 checks across fourteen testbenches: the ALU,
+register file, decoder, hazard unit, multiply/divide unit, all five pipeline
+stages, a cycle-level harness for the assembled pipeline, and the out-of-order
+structures built so far:
 
 ```bash
 cd sim && make unit
 ```
+
+Confirm those tests can actually fail:
+
+```bash
+cd sim && make mutate             # every module that has cases
+cd sim && make mutate MODULE=rat  # just one
+```
+
+A passing test proves nothing on its own — it might be checking the right
+thing, or nothing at all, and the two look identical from outside. So every
+claim this repo makes about a testbench is backed by injecting bugs into the
+module and confirming the test goes red. `bin/mutations.json` holds the bugs;
+`bin/mutate.py` runs them and exits non-zero unless every one is caught.
+
+It reports a mutation that failed to build, or that hung, as neither a pass nor
+a catch. Both say nothing about the test, and an earlier version of this scored
+them as though they did.
 
 Check every retired instruction against Spike, and the two cores against each
 other:
@@ -212,7 +230,7 @@ those numbers live.
 Both cores execute the full RV32I base integer set and the M extension, pass
 the same tests, and produce byte-identical commit traces. Verified at four
 levels: every retired instruction checked against Spike, a 126-check ISA
-regression across two programs, 631 unit checks including a cycle-level
+regression across two programs, 10164 unit checks including a cycle-level
 pipeline harness, and mutation testing of all of it — deliberate bugs are
 injected to confirm the suites can actually fail.
 
