@@ -208,9 +208,19 @@ register file has exactly one place a value ever lives.
 | `rat` — architectural to physical map, plus the retirement copy | done |
 | `prf` — physical registers with ready bits | done |
 | `rob` — bookkeeping only, since the PRF holds the values | done |
-| `issue_queue` — wakeup and select | |
+| `issue_queue` — wakeup and select | done |
 
-Integration follows: dispatch, execute wiring, commit, and the top level.
+**All six components are built and tested. Integration follows:** dispatch,
+execute wiring, commit, and the top level.
+
+Two decisions in the issue queue are worth knowing before reading it. It
+COMPACTS -- entries shift down on issue, so an entry's index is its age and
+selecting the oldest ready instruction is a priority encoder rather than an age
+matrix. And selection reads the REGISTERED ready bits, not the ones this
+cycle's broadcast is setting, so an instruction woken in cycle N issues in N+1
+and never in N. That second one is forced by `prf.sv`: the broadcast value does
+not reach the register file until the cycle ends, so issuing during N would
+read the previous contents.
 
 Recovery is settled, and it is the mirror of the commit rule. A COMMITTED
 instruction releases the physical register it DISPLACED, because its own now

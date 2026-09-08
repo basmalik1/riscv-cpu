@@ -233,5 +233,55 @@
         "new": "            free_valid = !empty;"
       }
     ]
+  },
+  "issue_queue": {
+    "testbench": "tb_issue_queue",
+    "cases": [
+      {
+        "name": "select reads the post-wakeup state, issuing a cycle early",
+        "old": "            if (entries[i].valid && entries[i].rs1_ready && entries[i].rs2_ready) begin",
+        "new": "            if (woken[i].valid && woken[i].rs1_ready && woken[i].rs2_ready) begin"
+      },
+      {
+        "name": "wakeup lets the last port overwrite an earlier match",
+        "old": "            if (wake_valid[j] && (wake_tag[j] == tag)) begin\n                woken_by = 1'b1;\n            end",
+        "new": "            woken_by = wake_valid[j] && (wake_tag[j] == tag);"
+      },
+      {
+        "name": "selection runs ascending, so the youngest ready wins",
+        "old": "        for (int i = int'(DEPTH) - 1; i >= 0; i--) begin",
+        "new": "        for (int i = 0; i < int'(DEPTH); i++) begin"
+      },
+      {
+        "name": "only rs1 is required to be ready",
+        "old": "            if (entries[i].valid && entries[i].rs1_ready && entries[i].rs2_ready) begin",
+        "new": "            if (entries[i].valid && entries[i].rs1_ready) begin"
+      },
+      {
+        "name": "issue accept inverted, so a busy unit takes the work",
+        "old": "    assign taking = issue_valid && issue_accept;",
+        "new": "    assign taking = issue_valid && !issue_accept;"
+      },
+      {
+        "name": "the collapse shifts the wrong way, keeping the issued entry",
+        "old": "                if ((CB+1)'(unsigned'(i)) >= {1'b0, issue_idx}) begin",
+        "new": "                if ((CB+1)'(unsigned'(i)) > {1'b0, issue_idx}) begin"
+      },
+      {
+        "name": "a dispatch on its own wakeup cycle misses it",
+        "old": "                rs1_ready: dispatch_rs1_ready || woken_by(dispatch_rs1),",
+        "new": "                rs1_ready: dispatch_rs1_ready,"
+      },
+      {
+        "name": "the queue accepts work past DEPTH",
+        "old": "    assign dispatch_ready = (occupancy < (CB+1)'(DEPTH)) && !flush;",
+        "new": "    assign dispatch_ready = !flush;"
+      },
+      {
+        "name": "flush does not clear the entries",
+        "old": "        if (rst || flush) begin",
+        "new": "        if (rst) begin"
+      }
+    ]
   }
 }
