@@ -49,7 +49,6 @@
       }
     ]
   },
-
   "free_list": {
     "testbench": "tb_free_list",
     "cases": [
@@ -85,7 +84,6 @@
       }
     ]
   },
-
   "rat": {
     "testbench": "tb_rat",
     "cases": [
@@ -128,6 +126,56 @@
         "name": "write enable inverted",
         "old": "        end else if (we && (rd_addr != {ARCH_BITS{1'b0}})) begin",
         "new": "        end else if (!we && (rd_addr != {ARCH_BITS{1'b0}})) begin"
+      }
+    ]
+  },
+  "prf": {
+    "testbench": "tb_prf",
+    "cases": [
+      {
+        "name": "allocate sets ready instead of clearing it",
+        "old": "                ready[alloc_tag] <= 1'b0;",
+        "new": "                ready[alloc_tag] <= 1'b1;"
+      },
+      {
+        "name": "writeback clears ready instead of setting it",
+        "old": "                ready[wb_tag] <= 1'b1;",
+        "new": "                ready[wb_tag] <= 1'b0;"
+      },
+      {
+        "name": "tag 0 value guard protects the wrong tag",
+        "old": "    assign rs1_value = (rs1_tag == '0) ? 32'd0 : data[rs1_tag];",
+        "new": "    assign rs1_value = (rs1_tag == '1) ? 32'd0 : data[rs1_tag];"
+      },
+      {
+        "name": "tag 0 ready guard protects the wrong tag",
+        "old": "    assign rs1_ready = (rs1_tag == '0) ? 1'b1  : ready[rs1_tag];",
+        "new": "    assign rs1_ready = (rs1_tag == '1) ? 1'b1  : ready[rs1_tag];"
+      },
+      {
+        "name": "a read bypass is added, so reads see the in-flight write",
+        "old": "    assign rs1_value = (rs1_tag == '0) ? 32'd0 : data[rs1_tag];",
+        "new": "    assign rs1_value = (rs1_tag == '0) ? 32'd0 : ((wb && wb_tag == rs1_tag) ? wb_value : data[rs1_tag]);"
+      },
+      {
+        "name": "writeback lands on the allocated tag instead of its own",
+        "old": "                data[wb_tag]  <= wb_value;",
+        "new": "                data[alloc_tag]  <= wb_value;"
+      },
+      {
+        "name": "rs2 reads a neighbouring register",
+        "old": "    assign rs2_value = (rs2_tag == '0) ? 32'd0 : data[rs2_tag];",
+        "new": "    assign rs2_value = (rs2_tag == '0) ? 32'd0 : data[rs2_tag ^ 6'd1];"
+      },
+      {
+        "name": "reset leaves everything not ready",
+        "old": "            ready <= '1;",
+        "new": "            ready <= '0;"
+      },
+      {
+        "name": "allocate enable inverted",
+        "old": "            if (alloc) begin",
+        "new": "            if (!alloc) begin"
       }
     ]
   }
