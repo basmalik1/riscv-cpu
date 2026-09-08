@@ -7,6 +7,18 @@
     int checks_run    = 0;
     int checks_failed = 0;
 
+    // A hang is worse than a failure. It looks like a stuck build rather than
+    // a bug, and anything judging these tests from the outside -- CI, or the
+    // mutation harness -- reads a timeout as "nothing was detected" when the
+    // truth may be that the test detected plenty and then never got to say so.
+    //
+    // Deliberately generous: the longest test here runs a few tens of
+    // thousands of cycles, so this only fires on a genuine loop.
+    initial begin
+        #50_000_000;
+        $fatal(1, "watchdog expired after %0d checks -- the test hung", checks_run);
+    end
+
     task automatic expect_eq(string what, logic [31:0] got, logic [31:0] want);
         checks_run = checks_run + 1;
         if (got !== want) begin
