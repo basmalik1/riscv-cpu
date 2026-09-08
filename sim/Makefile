@@ -1,8 +1,8 @@
 SHELL := /bin/bash -o pipefail
 .SHELLFLAGS += -e
 
-# Which core to build. Both expose the same module name and port list, so
-# everything downstream -- testbench, FPGA top, lint -- is unchanged by this.
+# Which core to build. Every core exposes the same module name and port list,
+# so everything downstream -- testbench, FPGA top, lint -- is unchanged by this.
 CORE ?= single_cycle
 
 # The shared package first, then any package belonging to the selected core.
@@ -19,7 +19,10 @@ VER_SRCS := $(PKG_SRCS) $(HDL_SRCS) $(VER_HVL)
 # Same split as hdl/: shared board logic in fpga/common, the board top for
 # the selected core beside it. The single-cycle top needs a phase counter to
 # divide the clock; the pipelined one does not, which is the whole point.
-FPGA_SRCS := $(shell find $(PWD)/../fpga/common $(PWD)/../fpga/$(CORE) -name '*.sv')
+# wildcard, not a bare path: a core with no board top yet is simply absent
+# rather than a find error printed on every invocation of this Makefile.
+FPGA_DIRS := $(PWD)/../fpga/common $(wildcard $(PWD)/../fpga/$(CORE))
+FPGA_SRCS := $(shell find $(FPGA_DIRS) -name '*.sv')
 FPGA_HVL  := $(PWD)/../hvl/verilator_fpga/top_tb.sv $(PWD)/../hvl/verilator/verilator_harness.cpp
 FPGA_VER_SRCS := $(PKG_SRCS) $(HDL_SRCS) $(FPGA_SRCS) $(FPGA_HVL)
 
@@ -29,13 +32,17 @@ TIMEOUT     := $(shell $(GET_OPTIONS) timeout)
 MEM_BASE    := $(shell $(GET_OPTIONS) mem_base)
 MEM_SIZE    := $(shell $(GET_OPTIONS) mem_size)
 
-# The pipelined core expects a registered memory read; the single-cycle core
-# expects a combinational one. Selecting the core selects the memory model.
-SYNC_MEM := $(if $(filter pipelined,$(CORE)),1,0)
+# Only the single-cycle core needs a combinational read, and it needs one
+# structurally -- fetch, execute and writeback all happen inside one edge.
+# Every other core wants the registered read a real memory gives, so the rule
+# is written as an exception rather than a list. Written as a list it silently
+# handed the out-of-order core the wrong memory.
+SYNC_MEM := $(if $(filter single_cycle,$(CORE)),0,1)
 
-# The single-cycle board top drives the displays from the live fetch PC; the
-# pipelined one samples them. Only the former can be checked against the PC.
-LIVE_DISPLAY := $(if $(filter pipelined,$(CORE)),0,1)
+# The single-cycle board top drives the displays from the live fetch PC and is
+# the only one that can; anything with instructions in flight has to sample.
+# Same shape as SYNC_MEM above, and for the same reason.
+LIVE_DISPLAY := $(if $(filter single_cycle,$(CORE)),1,0)
 
 # Per-core build directories, for both paths. Sharing one lets a build from
 # the other core look up to date: make finds the binary newer than the
@@ -93,11 +100,18 @@ run_verilator_top_tb: $(VDIR)/build/Vtop_tb $(PROG)
 # Golden-model lockstep.
 #
 # `lockstep` runs the program on the core and on Spike and compares every
-# retired instruction. `crosscheck` compares the two CORES against each other,
-# which needs no Spike at all and is a strong check in its own right: the two
+# retired instruction. `crosscheck` compares two CORES against each other,
+# which needs no Spike at all and is a strong check in its own right: the
 # microarchitectures share only the decoder, the ALU and the mdu, so agreeing
 # instruction-for-instruction is not something a timing bug survives.
+#
+# Which two is a parameter, because the useful pair changes. Comparing a new
+# core against a known-good one localises a bug to that core immediately, which
+# is worth more than the default pair once there are three.
 # ----------------------------------------------------------------------------
+CROSS_A ?= single_cycle
+CROSS_B ?= pipelined
+
 TRACE := $(PWD)/$(VDIR)/commit.log
 ELF   := $(PWD)/bin/$(basename $(notdir $(PROG))).elf
 
@@ -120,11 +134,11 @@ lockstep: trace
 .PHONY: crosscheck
 crosscheck:
 	@test -n "$(PROG)" || (echo "Usage: make $@ PROG=../testcode/<test>.s" && false)
-	@$(MAKE) --no-print-directory CORE=single_cycle trace PROG=$(PROG)
-	@$(MAKE) --no-print-directory CORE=pipelined    trace PROG=$(PROG)
+	@$(MAKE) --no-print-directory CORE=$(CROSS_A) trace PROG=$(PROG)
+	@$(MAKE) --no-print-directory CORE=$(CROSS_B) trace PROG=$(PROG)
 	python3 $(PWD)/../bin/compare_spike.py --diff \
-		$(PWD)/verilator/single_cycle/commit.log \
-		$(PWD)/verilator/pipelined/commit.log
+		$(PWD)/verilator/$(CROSS_A)/commit.log \
+		$(PWD)/verilator/$(CROSS_B)/commit.log
 
 # ----------------------------------------------------------------------------
 # FPGA path, simulated. Proves fpga/top_de10lite.sv actually carries the core
@@ -132,6 +146,7 @@ crosscheck:
 # here counts board cycles -- roughly four per instruction.
 # ----------------------------------------------------------------------------
 $(FVDIR)/build/Vtop_tb: $(FPGA_VER_SRCS) verilator_warn.vlt
+	@test -d $(PWD)/../fpga/$(CORE) || (echo "no board top: fpga/$(CORE) does not exist" && false)
 	mkdir -p $(FVDIR)/build
 	cd $(FVDIR) && verilator $(VER_FLAGS) -GLIVE_DISPLAY=$(LIVE_DISPLAY) $(FPGA_VER_SRCS) --top-module top_tb \
 		|& tee build/compile.log

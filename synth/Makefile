@@ -15,6 +15,11 @@ SHELL := /bin/bash -o pipefail
 
 CORE ?= single_cycle
 
+# Every directory under hdl/ except common is a core. Derived rather than
+# listed, so the comparison targets below pick up a new one without being
+# edited -- which is what three hardcoded copies of the old list did not.
+CORES := $(filter-out common,$(notdir $(wildcard $(PWD)/../hdl/*)))
+
 # sv2v flattens SystemVerilog to Verilog-2005. Yosys's built-in frontend
 # rejects any user-defined type declared at file scope, package or not.
 PKG_SRCS := $(PWD)/../pkg/types.sv $(wildcard $(PWD)/../pkg/$(CORE)_types.sv)
@@ -83,7 +88,7 @@ synth: $(FLAT)
 
 .PHONY: compare
 compare:
-	@for c in single_cycle pipelined; do \
+	@for c in $(CORES); do \
 	    $(MAKE) --no-print-directory CORE=$$c synth > /dev/null 2>&1 || \
 	        { echo "$$c: FAILED (see synth/build/$$c/synth.log)"; continue; }; \
 	    cells=$$(grep -E '^\s+Number of cells:' build/$$c/synth.log | tail -1 | awk '{print $$4}'); \
@@ -112,7 +117,7 @@ area: $(MAPPED)
 
 .PHONY: area-compare
 area-compare:
-	@for c in single_cycle pipelined; do \
+	@for c in $(CORES); do \
 	    $(MAKE) --no-print-directory CORE=$$c area > /dev/null 2>&1 || \
 	        { echo "$$c: FAILED (see synth/build/$$c/map.log)"; continue; }; \
 	    cells=$$(grep -E '^\s+Number of cells:' build/$$c/map.log | tail -1 | awk '{print $$4}'); \
@@ -139,7 +144,7 @@ timing: $(MAPPED)
 
 .PHONY: timing-compare
 timing-compare:
-	@for c in single_cycle pipelined; do \
+	@for c in $(CORES); do \
 	    $(MAKE) --no-print-directory CORE=$$c timing > /dev/null 2>&1 || \
 	        { echo "$$c: FAILED (see synth/build/$$c/sta.log)"; continue; }; \
 	    arr=$$(grep -E 'data arrival time' build/$$c/sta.log | head -1 | awk '{print $$1}'); \
