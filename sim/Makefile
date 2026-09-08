@@ -152,12 +152,20 @@ run_fpga_sim: $(FVDIR)/build/Vtop_tb $(PROG)
 # Unit tests. One self-checking testbench per module, built with --binary so
 # each drives its own clock and needs no C++ harness.
 #
-# Always compiled against hdl/common + hdl/pipelined regardless of CORE: the
-# stage modules only exist in the pipelined core, and the shared modules are
-# the same either way.
+# Compiled against every core's modules at once regardless of CORE, so that one
+# `make unit` covers the whole tree. The stage modules only exist in the
+# pipelined core and the out-of-order structures only in ooo; the shared
+# modules are the same either way.
+#
+# The exception is each core's top module. Two files named cpu.sv cannot both
+# be elaborated, so the ooo one is excluded and tb_pipeline gets the pipelined
+# core it expects. A unit test for the ooo top, when there is one, will need
+# its own source list rather than this shared one.
 # ----------------------------------------------------------------------------
-UNIT_PKG  := $(PWD)/../pkg/types.sv $(PWD)/../pkg/pipelined_types.sv
-UNIT_HDL  := $(shell find $(PWD)/../hdl/common $(PWD)/../hdl/pipelined -name '*.sv')
+UNIT_PKG  := $(PWD)/../pkg/types.sv $(PWD)/../pkg/pipelined_types.sv \
+             $(wildcard $(PWD)/../pkg/ooo_types.sv)
+UNIT_HDL  := $(shell find $(PWD)/../hdl/common $(PWD)/../hdl/pipelined \
+                         $(PWD)/../hdl/ooo -name '*.sv' -not -path '*/ooo/cpu.sv')
 UNIT_TBS  := $(sort $(wildcard $(PWD)/../hvl/unit/tb_*.sv))
 
 UNIT_FLAGS = --binary --timing -Wall --timescale 1ps/1ps \
