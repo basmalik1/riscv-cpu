@@ -343,5 +343,65 @@
         "new": "            imm_s:   imm = {{20{inst[31]}}, inst[11:7], inst[31:25]};"
       }
     ]
+  },
+  "execute": {
+    "testbench": "tb_execute",
+    "cases": [
+      {
+        "name": "a divide blocks the fast path, killing latency hiding",
+        "old": "    assign fast_can_go = !mem_busy && !mdu_done;",
+        "new": "    assign fast_can_go = !mem_busy && !mdu_done && !mdu_busy;"
+      },
+      {
+        "name": "arbitration inverted: the fast path wins over a finished divide",
+        "old": "    assign fast_can_go = !mem_busy && !mdu_done;",
+        "new": "    assign fast_can_go = 1'b1;"
+      },
+      {
+        "name": "memory is allowed to run speculatively",
+        "old": "                         && (issue_payload.rob_idx == rob_head_idx);",
+        "new": "                         && (issue_payload.rob_idx != rob_head_idx);"
+      },
+      {
+        "name": "a second divide is accepted while the first runs",
+        "old": "    assign accept_div  = issue_valid && is_div && !mdu_busy;",
+        "new": "    assign accept_div  = issue_valid && is_div;"
+      },
+      {
+        "name": "multiplies are sent to the divider instead of the fast path",
+        "old": "    assign is_div = issue_payload.is_muldiv &&  issue_payload.funct3[2];",
+        "new": "    assign is_div = issue_payload.is_muldiv;"
+      },
+      {
+        "name": "a not-taken branch reports a mispredict",
+        "old": "                             || (issue_payload.is_branch && branch_taken);",
+        "new": "                             || (issue_payload.is_branch && !branch_taken);"
+      },
+      {
+        "name": "jalr does not clear bit 0 of its target",
+        "old": "    assign fast_redirect   = issue_payload.is_jalr ? {alu_f[31:1], 1'b0} : alu_f;",
+        "new": "    assign fast_redirect   = alu_f;"
+      },
+      {
+        "name": "the divide result is taken from the fast path",
+        "old": "            wb_value             = mdu_result;",
+        "new": "            wb_value             = alu_f;"
+      },
+      {
+        "name": "a store broadcasts a result",
+        "old": "            wb_valid             = mem_payload.writes_reg;",
+        "new": "            wb_valid             = !mem_payload.writes_reg;"
+      },
+      {
+        "name": "the load completes the wrong reorder buffer entry",
+        "old": "            complete_idx         = mem_payload.rob_idx;",
+        "new": "            complete_idx         = ~mem_payload.rob_idx;"
+      },
+      {
+        "name": "the memory access is not gated, so every instruction reads",
+        "old": "    assign mem_start    = accept_mem;",
+        "new": "    assign mem_start    = issue_valid;"
+      }
+    ]
   }
 }

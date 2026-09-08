@@ -62,7 +62,11 @@ package ooo_types;
         logic                 is_muldiv;
         logic                 mem_read;
         logic                 mem_write;
-        logic                 is_halt;
     } iq_payload_t;
+
+    // is_halt is deliberately absent. Dispatch hands it to the reorder buffer
+    // directly and the reorder buffer reports it at commit, so a copy riding
+    // through the issue queue would be a second source of truth that execute
+    // never reads.
 
 endpackage

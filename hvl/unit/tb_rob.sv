@@ -28,6 +28,7 @@ module tb_rob;
     logic [5:0]  alloc_rd_phys, alloc_rd_old_phys;
     logic [31:0] alloc_pc;
     logic [4:0]  alloc_idx;
+    logic [4:0]  head_idx;
 
     logic        complete, complete_mispredict;
     logic [4:0]  complete_idx;

@@ -54,6 +54,13 @@ module rob #(
 
     // The slot taken, which is the tag execution reports back with.
     output logic [$clog2(DEPTH)-1:0]      alloc_idx,
+
+    // Which entry is oldest. Execute needs it because there is no load/store
+    // queue yet: a memory operation may only touch memory once it is the
+    // oldest instruction in the machine, which is what makes it
+    // non-speculative and keeps memory operations in program order with
+    // respect to each other. Costs nothing here -- it is the head pointer.
+    output logic [$clog2(DEPTH)-1:0]      head_idx,
     // Low when the buffer is full or a flush is in progress. Rename stalls.
     output logic                          alloc_ready,
 
@@ -120,6 +127,7 @@ module rob #(
     assign full  = (head[IDX] != tail[IDX]) && (head[IDX-1:0] == tail[IDX-1:0]);
 
     assign alloc_idx   = tail[IDX-1:0];
+    assign head_idx    = head[IDX-1:0];
     assign alloc_ready = !full && !flushing;
 
     rob_entry_t head_entry;

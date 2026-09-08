@@ -184,7 +184,6 @@ import ooo_types::*;
         iq_payload.is_muldiv   = is_muldiv;
         iq_payload.mem_read    = mem_read;
         iq_payload.mem_write   = mem_write;
-        iq_payload.is_halt     = (inst == HALT_INST);
     end
 
 endmodule

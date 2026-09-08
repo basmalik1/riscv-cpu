@@ -185,8 +185,9 @@ import ooo_types::*;
         inst = HALT_INST;
         all_resources();
         #1;
+        // Only the reorder buffer is told. The payload has no copy, so there
+        // is one place the fact lives.
         expect_bit("halt is flagged to the rob", rob_is_halt, 1'b1);
-        expect_bit("halt is flagged in the payload", iq_payload.is_halt, 1'b1);
         inst = 32'h00510093;
         #1;
         expect_bit("an ordinary instruction is not", rob_is_halt, 1'b0);
