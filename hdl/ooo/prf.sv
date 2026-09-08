@@ -30,13 +30,37 @@ module prf #(
     input  logic clk,
     input  logic rst,
 
+    // Value reads, for execute. It never asks whether a register is ready --
+    // the issue queue has already established that, which is the only reason
+    // the instruction was issued at all.
     input  logic [$clog2(PHYS_REGS)-1:0] rs1_tag,
     output logic [31:0]                  rs1_value,
-    output logic                         rs1_ready,
-
     input  logic [$clog2(PHYS_REGS)-1:0] rs2_tag,
     output logic [31:0]                  rs2_value,
-    output logic                         rs2_ready,
+
+    // Readiness lookups, for dispatch. Separate ports because dispatch asks
+    // about DIFFERENT registers than execute is reading in the same cycle: one
+    // instruction is being renamed while another issues. Cheap to add --
+    // selecting one bit of a 64-bit vector is nothing beside muxing 32 bits out
+    // of 64 registers, which is what a value port costs.
+    input  logic [$clog2(PHYS_REGS)-1:0] chk1_tag,
+    output logic                         chk1_ready,
+    input  logic [$clog2(PHYS_REGS)-1:0] chk2_tag,
+    output logic                         chk2_ready,
+
+    // A third value read, for the commit trace and nothing else. At commit the
+    // result is in the register file and nowhere else, so reporting what an
+    // instruction produced means reading it back.
+    //
+    // This is the one place the out-of-order core pays real hardware for
+    // verification, and it is a whole 32-bit read port rather than the handful
+    // of wires the other two cores needed. The alternative -- reconstructing
+    // the value in the testbench from the result bus -- would report the value
+    // the bus CARRIED rather than the one the register file HOLDS, so a
+    // register file that failed to store would trace correctly and lockstep
+    // would pass on a real bug.
+    input  logic [$clog2(PHYS_REGS)-1:0] commit_tag,
+    output logic [31:0]                  commit_value,
 
     // Rename: this tag now belongs to an instruction that has not run yet.
     input  logic                         alloc,
@@ -53,10 +77,12 @@ module prf #(
 
     // Reads see the state before this cycle's write, which is what "no bypass"
     // means in practice.
-    assign rs1_value = (rs1_tag == '0) ? 32'd0 : data[rs1_tag];
-    assign rs1_ready = (rs1_tag == '0) ? 1'b1  : ready[rs1_tag];
-    assign rs2_value = (rs2_tag == '0) ? 32'd0 : data[rs2_tag];
-    assign rs2_ready = (rs2_tag == '0) ? 1'b1  : ready[rs2_tag];
+    assign rs1_value    = (rs1_tag    == '0) ? 32'd0 : data[rs1_tag];
+    assign rs2_value    = (rs2_tag    == '0) ? 32'd0 : data[rs2_tag];
+    assign commit_value = (commit_tag == '0) ? 32'd0 : data[commit_tag];
+
+    assign chk1_ready = (chk1_tag == '0) ? 1'b1 : ready[chk1_tag];
+    assign chk2_ready = (chk2_tag == '0) ? 1'b1 : ready[chk2_tag];
 
     always_ff @(posedge clk) begin
         if (rst) begin

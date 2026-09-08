@@ -24,9 +24,10 @@ module tb_prf;
 
     always #5 clk = ~clk;
 
-    logic [5:0]  rs1_tag, rs2_tag, alloc_tag, wb_tag;
-    logic [31:0] rs1_value, rs2_value, wb_value;
-    logic        rs1_ready, rs2_ready, alloc, wb;
+    logic [5:0]  rs1_tag, rs2_tag, alloc_tag, wb_tag, commit_tag;
+    logic [5:0]  chk1_tag, chk2_tag;
+    logic [31:0] rs1_value, rs2_value, wb_value, commit_value;
+    logic        chk1_ready, chk2_ready, alloc, wb;
 
     prf #(.PHYS_REGS(PHYS)) dut (.*);
 
@@ -59,6 +60,7 @@ module tb_prf;
     task automatic reset_dut();
         rst = 1'b1; alloc = 1'b0; wb = 1'b0;
         rs1_tag = '0; rs2_tag = '0; alloc_tag = '0; wb_tag = '0; wb_value = '0;
+        chk1_tag = '0; chk2_tag = '0; commit_tag = '0;
         @(negedge clk);
         @(negedge clk);
         rst = 1'b0;
@@ -71,29 +73,43 @@ module tb_prf;
 
     int a, b;
 
+    // Every case below asks about one register at a time, so the value port and
+    // the readiness port are driven together. They are separate ports in the
+    // design because dispatch and execute ask about different registers in the
+    // same cycle; here that distinction only matters for the case that tests it.
+    task automatic set1(logic [5:0] t);
+        rs1_tag  = t;
+        chk1_tag = t;
+    endtask
+
+    task automatic set2(logic [5:0] t);
+        rs2_tag  = t;
+        chk2_tag = t;
+    endtask
+
     initial begin
         reset_dut();
 
         // ---- reset: everything zero and everything ready --------------------
         for (int i = 0; i < int'(PHYS); i++) begin
-            rs1_tag = 6'(i);
+            set1(6'(i));
             #1;
             expect_eq ("reset: value is zero", rs1_value, 32'd0);
-            expect_bit("reset: ready is set",  rs1_ready, 1'b1);
+            expect_bit("reset: ready is set",  chk1_ready, 1'b1);
         end
 
         // ---- a value written is a value read --------------------------------
         do_wb(6'd40, 32'hdead_beef);
-        rs1_tag = 6'd40; #1;
+        set1(6'd40); #1;
         expect_eq ("write then read",   rs1_value, 32'hdead_beef);
-        expect_bit("writeback is ready", rs1_ready, 1'b1);
+        expect_bit("writeback is ready", chk1_ready, 1'b1);
 
-        rs2_tag = 6'd41; #1;
+        set2(6'd41); #1;
         expect_eq("neighbour untouched", rs2_value, 32'd0);
 
         // ---- both read ports are independent ---------------------------------
         do_wb(6'd41, 32'h1234_5678);
-        rs1_tag = 6'd40; rs2_tag = 6'd41; #1;
+        set1(6'd40); set2(6'd41); #1;
         expect_eq("port 1", rs1_value, 32'hdead_beef);
         expect_eq("port 2", rs2_value, 32'h1234_5678);
 
@@ -102,22 +118,22 @@ module tb_prf;
         // has not executed, so what is in it is stale and nothing may issue
         // against it.
         do_alloc(6'd40);
-        rs1_tag = 6'd40; #1;
-        expect_bit("allocate clears ready", rs1_ready, 1'b0);
+        set1(6'd40); #1;
+        expect_bit("allocate clears ready", chk1_ready, 1'b0);
         expect_eq ("stale value still readable while not ready",
                    rs1_value, 32'hdead_beef);
 
         // Writeback sets it again, with the new value.
         do_wb(6'd40, 32'h0bad_c0de);
-        rs1_tag = 6'd40; #1;
-        expect_bit("writeback sets ready", rs1_ready, 1'b1);
+        set1(6'd40); #1;
+        expect_bit("writeback sets ready", chk1_ready, 1'b1);
         expect_eq ("writeback delivers the value", rs1_value, 32'h0bad_c0de);
 
         // Allocating one register must not disturb another's readiness.
         do_alloc(6'd50);
-        rs1_tag = 6'd50; rs2_tag = 6'd40; #1;
-        expect_bit("allocated one is not ready", rs1_ready, 1'b0);
-        expect_bit("its neighbour still is",     rs2_ready, 1'b1);
+        set1(6'd50); set2(6'd40); #1;
+        expect_bit("allocated one is not ready", chk1_ready, 1'b0);
+        expect_bit("its neighbour still is",     chk2_ready, 1'b1);
 
         // ---- no read bypass, and the cycle after --------------------------
         // An instruction reading a tag on the cycle it is written back sees the
@@ -125,7 +141,7 @@ module tb_prf;
         // issues the cycle AFTER a broadcast rather than during it -- by then
         // the write has landed and an ordinary read returns it.
         do_wb(6'd42, 32'haaaa_aaaa);
-        rs1_tag  = 6'd42;
+        set1(6'd42);
         wb       = 1'b1;
         wb_tag   = 6'd42;
         wb_value = 32'hbbbb_bbbb;
@@ -151,9 +167,9 @@ module tb_prf;
         wb    = 1'b0;
         m_ready[45] = 1'b0;
         m_data[44]  = 32'd99;
-        rs1_tag = 6'd45; rs2_tag = 6'd44; #1;
-        expect_bit("same cycle: the allocated one is not ready", rs1_ready, 1'b0);
-        expect_bit("same cycle: the written one is ready",       rs2_ready, 1'b1);
+        set1(6'd45); set2(6'd44); #1;
+        expect_bit("same cycle: the allocated one is not ready", chk1_ready, 1'b0);
+        expect_bit("same cycle: the written one is ready",       chk2_ready, 1'b1);
         expect_eq ("same cycle: the written value landed",       rs2_value, 32'd99);
 
         // ---- tag 0 survives everything --------------------------------------
@@ -161,24 +177,24 @@ module tb_prf;
         // allocates or writes it, so these are checks that the guard holds
         // rather than checks of something that happens.
         do_wb(6'd0, 32'hffff_ffff);
-        rs1_tag = 6'd0; #1;
+        set1(6'd0); #1;
         expect_eq ("tag 0 reads zero after a write", rs1_value, 32'd0);
-        expect_bit("tag 0 stays ready after a write", rs1_ready, 1'b1);
+        expect_bit("tag 0 stays ready after a write", chk1_ready, 1'b1);
 
         do_alloc(6'd0);
-        rs1_tag = 6'd0; #1;
+        set1(6'd0); #1;
         expect_eq ("tag 0 reads zero after an allocate",  rs1_value, 32'd0);
-        expect_bit("tag 0 stays ready after an allocate", rs1_ready, 1'b1);
+        expect_bit("tag 0 stays ready after an allocate", chk1_ready, 1'b1);
 
         // And neither disturbed anything else.
-        rs1_tag = 6'd44; #1;
+        set1(6'd44); #1;
         expect_eq("tag 0 traffic left tag 44 alone", rs1_value, 32'd99);
 
         // ---- reset clears a dirty file ---------------------------------------
         reset_dut();
-        rs1_tag = 6'd40; rs2_tag = 6'd50; #1;
+        set1(6'd40); set2(6'd50); #1;
         expect_eq ("reset: value cleared", rs1_value, 32'd0);
-        expect_bit("reset: ready restored", rs2_ready, 1'b1);
+        expect_bit("reset: ready restored", chk2_ready, 1'b1);
 
         // ---- a long random run against the model ------------------------------
         for (int i = 0; i < 3000; i++) begin
@@ -191,18 +207,18 @@ module tb_prf;
             wb_tag    = 6'(b);
             wb_value  = $urandom();
 
-            rs1_tag = 6'($urandom_range(0, int'(PHYS) - 1));
-            rs2_tag = 6'($urandom_range(0, int'(PHYS) - 1));
+            set1(6'($urandom_range(0, int'(PHYS) - 1)));
+            set2(6'($urandom_range(0, int'(PHYS) - 1)));
             #1;
 
             expect_eq ("random: rs1 value", rs1_value,
-                       (rs1_tag == 6'd0) ? 32'd0 : m_data[rs1_tag]);
-            expect_bit("random: rs1 ready", rs1_ready,
-                       (rs1_tag == 6'd0) ? 1'b1 : m_ready[rs1_tag]);
+                       (chk1_tag == 6'd0) ? 32'd0 : m_data[rs1_tag]);
+            expect_bit("random: rs1 ready", chk1_ready,
+                       (chk1_tag == 6'd0) ? 1'b1 : m_ready[chk1_tag]);
             expect_eq ("random: rs2 value", rs2_value,
-                       (rs2_tag == 6'd0) ? 32'd0 : m_data[rs2_tag]);
-            expect_bit("random: rs2 ready", rs2_ready,
-                       (rs2_tag == 6'd0) ? 1'b1 : m_ready[rs2_tag]);
+                       (chk2_tag == 6'd0) ? 32'd0 : m_data[rs2_tag]);
+            expect_bit("random: rs2 ready", chk2_ready,
+                       (chk2_tag == 6'd0) ? 1'b1 : m_ready[chk2_tag]);
 
             @(negedge clk);
             // Model the same ordering the module uses: allocate first, then
@@ -220,13 +236,38 @@ module tb_prf;
 
         // Whatever the random run left must match entry for entry.
         for (int i = 0; i < int'(PHYS); i++) begin
-            rs1_tag = 6'(i);
+            set1(6'(i));
             #1;
             expect_eq ("final value matches the model", rs1_value,
                        (i == 0) ? 32'd0 : m_data[i]);
-            expect_bit("final ready matches the model", rs1_ready,
+            expect_bit("final ready matches the model", chk1_ready,
                        (i == 0) ? 1'b1 : m_ready[i]);
         end
+
+        // ---- the commit read port -------------------------------------------
+        // A third value read, used only by the commit trace. It has to see the
+        // same register file everything else does -- a trace port reading a
+        // stale or separate copy would report values the machine never had.
+        reset_dut();
+        do_wb(6'd40, 32'hFEED_FACE);
+        commit_tag = 6'd40;
+        #1;
+        expect_eq("commit port reads what was written", commit_value, 32'hFEED_FACE);
+
+        // Independent of the other two ports, since it reads a different
+        // register than either in the same cycle.
+        do_wb(6'd41, 32'h1111_2222);
+        set1(6'd40);
+        set2(6'd41);
+        commit_tag = 6'd41;
+        #1;
+        expect_eq("commit port is independent of port 1", rs1_value, 32'hFEED_FACE);
+        expect_eq("commit port reads its own register",   commit_value, 32'h1111_2222);
+
+        // And tag 0 through it reads zero, like everywhere else.
+        commit_tag = 6'd0;
+        #1;
+        expect_eq("commit port: tag 0 reads zero", commit_value, 32'd0);
 
         report("prf");
     end

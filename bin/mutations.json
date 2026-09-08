@@ -159,18 +159,18 @@
       },
       {
         "name": "tag 0 value guard protects the wrong tag",
-        "old": "    assign rs1_value = (rs1_tag == '0) ? 32'd0 : data[rs1_tag];",
-        "new": "    assign rs1_value = (rs1_tag == '1) ? 32'd0 : data[rs1_tag];"
+        "old": "    assign rs1_value    = (rs1_tag    == '0) ? 32'd0 : data[rs1_tag];",
+        "new": "    assign rs1_value    = (rs1_tag    == '1) ? 32'd0 : data[rs1_tag];"
       },
       {
         "name": "tag 0 ready guard protects the wrong tag",
-        "old": "    assign rs1_ready = (rs1_tag == '0) ? 1'b1  : ready[rs1_tag];",
-        "new": "    assign rs1_ready = (rs1_tag == '1) ? 1'b1  : ready[rs1_tag];"
+        "old": "    assign chk1_ready = (chk1_tag == '0) ? 1'b1 : ready[chk1_tag];",
+        "new": "    assign chk1_ready = (chk1_tag == '1) ? 1'b1 : ready[chk1_tag];"
       },
       {
         "name": "a read bypass is added, so reads see the in-flight write",
-        "old": "    assign rs1_value = (rs1_tag == '0) ? 32'd0 : data[rs1_tag];",
-        "new": "    assign rs1_value = (rs1_tag == '0) ? 32'd0 : ((wb && wb_tag == rs1_tag) ? wb_value : data[rs1_tag]);"
+        "old": "    assign rs1_value    = (rs1_tag    == '0) ? 32'd0 : data[rs1_tag];",
+        "new": "    assign rs1_value    = (rs1_tag    == '0) ? 32'd0 : ((wb && wb_tag == rs1_tag) ? wb_value : data[rs1_tag]);"
       },
       {
         "name": "writeback lands on the allocated tag instead of its own",
@@ -179,8 +179,8 @@
       },
       {
         "name": "rs2 reads a neighbouring register",
-        "old": "    assign rs2_value = (rs2_tag == '0) ? 32'd0 : data[rs2_tag];",
-        "new": "    assign rs2_value = (rs2_tag == '0) ? 32'd0 : data[rs2_tag ^ 6'd1];"
+        "old": "    assign rs2_value    = (rs2_tag    == '0) ? 32'd0 : data[rs2_tag];",
+        "new": "    assign rs2_value    = (rs2_tag    == '0) ? 32'd0 : data[rs2_tag ^ 6'd1];"
       },
       {
         "name": "reset leaves everything not ready",
@@ -191,6 +191,16 @@
         "name": "allocate enable inverted",
         "old": "            if (alloc) begin",
         "new": "            if (!alloc) begin"
+      },
+      {
+        "name": "the commit trace port reads a neighbouring register",
+        "old": "    assign commit_value = (commit_tag == '0) ? 32'd0 : data[commit_tag];",
+        "new": "    assign commit_value = (commit_tag == '0) ? 32'd0 : data[commit_tag ^ 6'd1];"
+      },
+      {
+        "name": "the second readiness lookup answers about the first register",
+        "old": "    assign chk2_ready = (chk2_tag == '0) ? 1'b1 : ready[chk2_tag];",
+        "new": "    assign chk2_ready = (chk2_tag == '0) ? 1'b1 : ready[chk1_tag];"
       }
     ]
   },
