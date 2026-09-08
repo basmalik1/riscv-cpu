@@ -178,5 +178,60 @@
         "new": "            if (!alloc) begin"
       }
     ]
+  },
+  "rob": {
+    "testbench": "tb_rob",
+    "cases": [
+      {
+        "name": "entries are marked done when allocated",
+        "old": "                    done:        1'b0,",
+        "new": "                    done:        1'b1,"
+      },
+      {
+        "name": "the commit and squash free rules are swapped",
+        "old": "            free_phys  = head_entry.rd_phys;\n        end else begin\n            free_valid = commit && head_entry.writes_reg;\n            free_phys  = head_entry.rd_old_phys;",
+        "new": "            free_phys  = head_entry.rd_old_phys;\n        end else begin\n            free_valid = commit && head_entry.writes_reg;\n            free_phys  = head_entry.rd_phys;"
+      },
+      {
+        "name": "a squashed entry releases the displaced tag, not its own",
+        "old": "            free_phys  = head_entry.rd_phys;",
+        "new": "            free_phys  = head_entry.rd_old_phys;"
+      },
+      {
+        "name": "the mispredict test is inverted, so correct branches flush",
+        "old": "                if (head_entry.mispredict) begin",
+        "new": "                if (!head_entry.mispredict) begin"
+      },
+      {
+        "name": "the mispredicting instruction is squashed, not committed",
+        "old": "    assign commit            = !empty && head_entry.done && !flushing;",
+        "new": "    assign commit            = !empty && head_entry.done && !flushing && !head_entry.mispredict;"
+      },
+      {
+        "name": "allocation is allowed during the squash walk",
+        "old": "    assign alloc_ready = !full && !flushing;",
+        "new": "    assign alloc_ready = !full;"
+      },
+      {
+        "name": "full and empty wrap bit compared the wrong way",
+        "old": "    assign full  = (head[IDX] != tail[IDX]) && (head[IDX-1:0] == tail[IDX-1:0]);",
+        "new": "    assign full  = (head[IDX] == tail[IDX]) && (head[IDX-1:0] == tail[IDX-1:0]);"
+      },
+      {
+        "name": "completion marks the head instead of the entry it names",
+        "old": "                entries[complete_idx].done        <= 1'b1;",
+        "new": "                entries[head[IDX-1:0]].done        <= 1'b1;"
+      },
+      {
+        "name": "the flush target is off by an instruction",
+        "old": "                    flush_pc_q <= head_entry.redirect_pc;",
+        "new": "                    flush_pc_q <= head_entry.redirect_pc + 32'd4;"
+      },
+      {
+        "name": "a squashed entry frees regardless of writes_reg",
+        "old": "            free_valid = !empty && head_entry.writes_reg;",
+        "new": "            free_valid = !empty;"
+      }
+    ]
   }
 }

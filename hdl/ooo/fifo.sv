@@ -1,14 +1,16 @@
 // A circular FIFO, parameterised by payload width and depth.
 //
-// The first thing built for the out-of-order core, because three of its
+// The first thing built for the out-of-order core, because two of its
 // structures are this module wearing different names: the free list is a FIFO
-// of physical register tags, the instruction queue is a FIFO of fetched
-// instructions, and the reorder buffer is this pointer arithmetic with a
-// payload that can be written after it is enqueued.
+// of physical register tags, and the instruction queue is a FIFO of fetched
+// instructions. Getting it wrong once would be getting it wrong twice, which
+// is the argument for building and testing it alone first.
 //
-// Getting it wrong once is therefore getting it wrong three times, which is
-// the argument for building and testing it on its own before anything depends
-// on it.
+// NOT the reorder buffer, though an earlier version of this comment claimed
+// it was. A reorder buffer is written at an ARBITRARY entry -- a functional
+// unit completes whichever instruction it was handed, and marks that one done
+// -- and random access is exactly what a queue does not offer. rob.sv shares
+// the head/tail idiom below and nothing else, so it keeps its own copy of it.
 //
 // Two constraints the parameters do not enforce, because there is no clean way
 // to fail an elaboration in a module that also has to pass through sv2v and

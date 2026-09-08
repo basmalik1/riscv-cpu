@@ -179,8 +179,6 @@ licensed synthesis flow. Doing the other style of renaming, on a toolchain
 anyone can install from apt, is a good part of why this iteration interests me.
 That is a preference and not a reason. The reasons follow.
 
-(This section previously said Tomasulo. It was describing the wrong design.)
-
 Tomasulo with a reorder buffer is the other standard answer, and it is tempting
 because it needs fewer structures. If a ROB slot doubles as both the rename tag
 and the storage for the value, there is no physical register file to build and
@@ -205,14 +203,23 @@ register file has exactly one place a value ever lives.
 
 | Component | State |
 |---|---|
-| `fifo` — the circular queue the rest are built on | done |
-| `free_list` — a FIFO of physical tags | |
-| `rat` — architectural to physical map, plus the retirement copy | |
-| `prf` — physical registers with ready bits | |
-| `rob` — bookkeeping only, since the PRF holds the values | |
+| `fifo` — the circular queue the free list and instruction queue are built on | done |
+| `free_list` — a FIFO of physical tags | done |
+| `rat` — architectural to physical map, plus the retirement copy | done |
+| `prf` — physical registers with ready bits | done |
+| `rob` — bookkeeping only, since the PRF holds the values | done |
 | `issue_queue` — wakeup and select | |
 
 Integration follows: dispatch, execute wiring, commit, and the top level.
+
+Recovery is settled, and it is the mirror of the commit rule. A COMMITTED
+instruction releases the physical register it DISPLACED, because its own now
+holds architectural state; a SQUASHED one releases its OWN, because it never
+became architectural. So after a mispredicting instruction commits, the reorder
+buffer walks the entries behind it and hands each one's register back, one per
+cycle, through the same free-list port commit uses. That costs a cycle per
+in-flight instruction and is why `free_list` and `rat` need no flush ports of
+their own — the reorder buffer drives their ordinary ones.
 
 **Done when:** `make lockstep` passes on every program in `testcode/` for the
 out-of-order core, and that core beats the pipelined one in wall-clock time on
